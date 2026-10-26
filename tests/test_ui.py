@@ -61,3 +61,15 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(content), {'version':1, 'poses':[]})
         self.assertIn('Content-Disposition', dict(headers))
+
+    def test_sequence_preview_routes_do_not_move_hardware(self):
+        headers = {'Content-Type':'application/json', 'X-Control-Token':self.server.token}
+        status, response, _ = self.request('POST', '/api/sequence/demo-poses', {}, headers)
+        self.assertEqual(status, 200)
+        selection = json.loads(response)
+        status, response, _ = self.request('POST', '/api/sequence/preview', selection, headers)
+        self.assertEqual(status, 200)
+        preview = json.loads(response)
+        self.assertEqual(preview['gripper'], 'rg2')
+        self.assertFalse(self.service.state()['connected'])
+        self.assertEqual(self.request('POST', '/api/sequence/run', {'preview_id':preview['id']}, headers)[0], 400)

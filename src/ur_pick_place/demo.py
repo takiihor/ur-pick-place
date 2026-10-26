@@ -10,8 +10,17 @@ class DemoRobot:
         self.joints = [0, -1.57, 1.57, -1.57, -1.57, 0]
         self._move = None
         self._token = -1
+        self._duration = .6
+        self._force_active = False
+        self._force_target = .25
+        self._force_speed = .005
+        self._force_at = time.monotonic()
 
     def _update(self):
+        now = time.monotonic()
+        if self._force_active:
+            self.pose[2] = max(self._force_target, self.pose[2] - self._force_speed*30*(now-self._force_at))
+        self._force_at = now
         if self._move:
             attr, start, target, began, duration = self._move
             fraction = min(1, (time.monotonic()-began)/duration)
@@ -38,6 +47,9 @@ class DemoRobot:
         return list(self.joints)
 
     def getActualTCPForce(self):
+        self._update()
+        if self._force_active and self.pose[2] <= self._force_target:
+            return [0.0, 0.0, 20.0, 0.0, 0.0, 0.0]
         return [0.0]*6
 
     def getAsyncOperationProgress(self):
@@ -46,7 +58,7 @@ class DemoRobot:
 
     def _start(self, attr, target):
         self._update()
-        self._move = (attr, list(getattr(self, attr)), list(target), time.monotonic(), .6)
+        self._move = (attr, list(getattr(self, attr)), list(target), time.monotonic(), self._duration)
         return True
 
     def moveL(self, pose, speed, acceleration, asynchronous):
@@ -74,7 +86,31 @@ class DemoRobot:
         self.stopL()
 
     def stopScript(self):
+        self.forceModeStop()
         self.stopL()
+        return True
+
+    def prepare_probe(self, target_z):
+        self._force_target = target_z
+
+    def zeroFtSensor(self):
+        return True
+
+    def initPeriod(self):
+        return time.monotonic()
+
+    def waitPeriod(self, began):
+        time.sleep(max(0, .008-(time.monotonic()-began)))
+
+    def forceMode(self, frame, axes, wrench, kind, limits):
+        self._update()
+        self._force_active = True
+        self._force_speed = limits[2]
+        return True
+
+    def forceModeStop(self):
+        self._update()
+        self._force_active = False
         return True
 
     def disconnect(self):

@@ -32,8 +32,9 @@ class PickPlaceController:
     an automatic release, recovery move, or next cycle.
     """
 
-    def __init__(self, recipe, robot=None, gripper=None):
+    def __init__(self, recipe, robot=None, gripper=None, *, on_step=None):
         self.recipe, self.robot, self.gripper = recipe, robot, gripper
+        self.on_step = on_step or (lambda key, message: None)
 
     def validate_pose(self, pose):
         pose = vector(pose, 6, 'TCP pose')
@@ -80,10 +81,13 @@ class PickPlaceController:
         for cycle in range(cycles):
             logger.info('Starting cycle %d/%d', cycle + 1, cycles)
             self.gripper.require_ready()
+            self.on_step('home', 'Move home and open gripper')
             logger.info('Moving home, opening gripper, approaching pick')
             self.robot.move_joints(c.home_joints)
             self.gripper.open()
+            self.on_step('approach_pick', 'Move above pick target')
             self._linear(plan['pick_approach'])
+            self.on_step('force_pick', 'Force search for pick contact or endpoint')
             with self.gripper.probe_guard() as guard:
                 result = self.robot.probe(c.pick_probe, endpoint_z=plan['pick'][2], guard=guard)
             # probe() must stop force mode successfully before returning.
@@ -96,22 +100,26 @@ class PickPlaceController:
                 raise SequenceError('Invalid pick stop condition; grip blocked')
             grasp = self.validate_pose(shifted(grasp, c.grasp_offset_mm))
             lift = self.validate_pose(shifted(grasp, [0, 0, c.lift_mm]))
+            self.on_step('grasp', 'Apply grasp offset and close gripper')
             logger.info('Pick stopped on %s; moving to grasp pose %s', result.reason, grasp)
             self._linear(grasp, loaded=True)
             logger.info('Closing gripper and verifying grip')
             self.gripper.grip()
+            self.on_step('lift_home', 'Verify grip, lift, and return through home')
             self.gripper.require_holding()
             self._linear(lift, loaded=True)
             self.gripper.require_holding()
             self.robot.move_joints(c.home_joints)
             self.gripper.require_holding()
             logger.info('Approaching placement and probing for contact')
+            self.on_step('place', 'Approach placement and force-descend')
             self._linear(plan['place_approach'])
             placed = self.robot.probe(c.place_probe)
             if placed.reason != 'contact':
                 raise SequenceError('Placement requires contact; release blocked')
             placed_pose = self.validate_pose(placed.pose)
             retract = self.validate_pose(shifted(placed_pose, [0, 0, c.retract_mm]))
+            self.on_step('place', 'Release at contact and retract')
             logger.info('Releasing at measured pose %s, then retracting', placed_pose)
             self.gripper.open()  # Includes release verification; failure blocks retract.
             self._linear(retract)

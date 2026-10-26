@@ -1,14 +1,18 @@
 """One worker owns RTDE; HTTP threads only submit commands/read snapshots."""
 from dataclasses import asdict, dataclass, field
+import json
 import math
 from pathlib import Path
 import queue
+import secrets
 import threading
 import time
 
 from .config import construct, number, vector
 from .geometry import rotate_base
 from .poses import atomic_json
+from .controller import PickPlaceController
+from .sequence_ui import STEPS, DemoGripper, SequenceStopped, SessionRobot, initial_recipe, resolve_recipe
 
 
 @dataclass
@@ -51,9 +55,16 @@ def live_backend(host):
 
 
 class ManualService:
-    def __init__(self, settings, store, *, demo=False, settings_path=None, factory=None):
+    def __init__(self, settings, store, *, demo=False, settings_path=None, factory=None,
+                 recipe=None, sequence_path=None):
         self.settings, self.store, self.demo = settings, store, demo
         self.settings_path = Path(settings_path) if settings_path else None
+        self.sequence_path = Path(sequence_path) if sequence_path else None
+        self._recipe = recipe or initial_recipe(settings)
+        self._selection = json.loads(self.sequence_path.read_text()) if self.sequence_path and self.sequence_path.exists() else {}
+        self._preview = None
+        self._sequence = dict(running=False, status='idle', step=None, message='Select poses and preview a cycle', history=[])
+        self._last_sequence_feedback = 0.0
         if factory is not None:
             self.factory = factory
         elif demo:
@@ -82,9 +93,15 @@ class ManualService:
     def state(self):
         with self._lock:
             result = dict(connected=self._connected, demo=self.demo,
-                          pending=self._pending, moving=self._motion is not None,
+                          pending=self._pending, moving=self._motion is not None or self._sequence['running'],
                           message=self._message, error=self._error,
                           settings=asdict(self.settings), feedback=None)
+            result['sequence'] = dict(self._sequence)
+            result['sequence']['history'] = list(self._sequence['history'])
+            result['sequence']['preview'] = self._preview['public'] if self._preview else None
+            result['sequence']['defaults'] = asdict(self._recipe)
+            result['sequence']['selection'] = self._selection
+            result['sequence']['steps'] = STEPS
             if self._feedback:
                 result['feedback'] = dict(self._feedback)
                 result['feedback']['age_s'] = time.monotonic() - result['feedback'].pop('received_at')
@@ -105,7 +122,7 @@ class ManualService:
         payload = {} if payload is None else payload
         if not isinstance(payload, dict):
             raise ValueError('Command must be a JSON object')
-        if command not in ('connect', 'disconnect', 'jog', 'move_tcp', 'move_saved'):
+        if command not in ('connect', 'disconnect', 'jog', 'move_tcp', 'move_saved', 'run_sequence'):
             raise ValueError('Unknown robot command')
         with self._lock:
             if self._shutdown.is_set():
@@ -122,6 +139,11 @@ class ManualService:
                 raise ValueError('Connect to the robot first')
             elif command != 'disconnect' and self._motion:
                 raise ValueError('A move is already running')
+            if command == 'run_sequence':
+                if not self._preview or payload.get('preview_id') != self._preview['public']['id']:
+                    raise ValueError('Preview the current sequence before running')
+                if self._preview['recipe'].robot_ip != self.settings.robot_ip:
+                    raise ValueError('Connection changed; preview again')
             self._error = None
             self._pending = command
             self._queue.put_nowait((command, payload, self._generation))
@@ -134,7 +156,119 @@ class ManualService:
             if self.settings_path:
                 atomic_json(self.settings_path, asdict(updated))
             self.settings = updated
+            self._preview = None
             return asdict(updated)
+
+    def preview_sequence(self, payload):
+        with self._lock:
+            if self._pending or self._motion:
+                raise ValueError('Wait for movement to finish before previewing')
+            recipe, names = resolve_recipe(self._recipe, self.settings, self.store, payload, self.demo)
+            plan = PickPlaceController(recipe).plan()
+            public = dict(id=secrets.token_urlsafe(18), plan=plan, names=names,
+                          gripper=recipe.gripper.kind, grasp_offset_mm=recipe.grasp_offset_mm,
+                          pick_force_n=recipe.pick_probe.contact_force_n,
+                          place_force_n=recipe.place_probe.contact_force_n,
+                          tcp_speed_mm_s=recipe.motion.transit_speed_mm_s,
+                          robot_ip=recipe.robot_ip, demo=self.demo)
+            if self.sequence_path:
+                atomic_json(self.sequence_path, payload)
+            self._selection = json.loads(json.dumps(payload))
+            self._preview = dict(recipe=recipe, public=public)
+            self._sequence = dict(running=False, status='previewed', step=None,
+                                  message='Preview ready · one cycle', history=[])
+            return public
+
+    def seed_demo_poses(self):
+        if not self.demo:
+            raise ValueError('Demo poses are only available in demo mode')
+        with self._lock:
+            if self._pending or self._motion:
+                raise ValueError('Wait for movement to finish')
+            result = {}
+            for role, pose in (('home', [.35, -.2, .4, 0, math.pi, 0]),
+                               ('pick', [.4, -.1, .25, 0, math.pi, 0]),
+                               ('place', [.45, -.17, .2, 0, math.pi, 0])):
+                name = 'demo_'+role
+                try:
+                    saved = self.store.by_name(name)
+                except ValueError:
+                    saved = self.store.save(name, pose, [0, -1.57, 1.57, -1.57, -1.57, 0],
+                                            robot_ip=self.settings.robot_ip, demo=True)
+                result[role+'_id'] = saved['id']
+            return result
+
+    def _sequence_tick(self):
+        if self._stop_requested.is_set() or self._shutdown.is_set():
+            raise SequenceStopped('Sequence stopped; no automatic release or recovery move')
+        now = time.monotonic()
+        if now-self._heartbeat_at > 2:
+            raise SequenceStopped('UI heartbeat lost; sequence stopped')
+        if now-self._last_sequence_feedback >= .04:
+            feedback = self._read()
+            self._last_sequence_feedback = now
+            if feedback['safety_mode'] not in (1, 2):
+                raise RuntimeError('Robot safety mode changed; sequence stopped')
+
+    def _sequence_step(self, key, message):
+        self._sequence_tick()
+        with self._lock:
+            self._sequence.update(step=key, message=message)
+            self._sequence['history'].append(dict(step=key, message=message))
+            self._message = message
+
+    def _execute_sequence(self, payload):
+        with self._lock:
+            if not self._preview or payload.get('preview_id') != self._preview['public']['id']:
+                raise ValueError('Preview expired; preview again')
+            recipe = self._preview['recipe']
+            self._preview = None  # A preview authorizes only one cycle.
+            self._sequence = dict(running=True, status='running', step=None,
+                                  message='Checking robot and gripper', history=[])
+        robot = SessionRobot(recipe, self.control, self.receive, self._sequence_tick, demo=self.demo)
+        gripper = None
+        try:
+            self._sequence_tick()
+            if self.demo:
+                gripper = DemoGripper(recipe.gripper, self._sequence_tick, robot.pause, state=self.control)
+            else:
+                from .grippers.adapters import connect_gripper
+                gripper = connect_gripper(recipe.gripper, recipe.robot_ip)
+                gripper.tick, gripper.pause = self._sequence_tick, robot.pause
+            PickPlaceController(recipe, robot, gripper, on_step=self._sequence_step).run()
+            with self._lock:
+                self._sequence.update(status='completed', message='One cycle completed')
+                self._message = 'One pick/place cycle completed'
+        except SequenceStopped as exc:
+            with self._lock:
+                self._sequence.update(status='stopped', message=str(exc))
+            raise
+        except Exception as exc:
+            with self._lock:
+                self._sequence.update(status='failed', message=str(exc))
+            raise
+        finally:
+            try:
+                if robot.stop_failed:
+                    raise RuntimeError('Arm stop failed; disconnecting control session')
+                robot.stop_force()
+            except Exception as exc:
+                with self._lock:
+                    self._sequence.update(status='failed', message=str(exc))
+                self._disconnect()
+                raise
+            finally:
+                try:
+                    if gripper:
+                        gripper.close()
+                except Exception as exc:
+                    with self._lock:
+                        self._sequence.update(status='failed', message=f'Gripper cleanup failed: {exc}')
+                    raise
+                finally:
+                    with self._lock:
+                        self._sequence['running'] = False
+                    self._stop_requested.clear()
 
     def record(self, name):
         with self._lock:
@@ -170,6 +304,7 @@ class ManualService:
 
     def _execute(self, command, payload, generation):
         if command == 'connect':
+            self._preview = None
             self._message = 'Connecting to RTDE…'
             self.settings.robot_ip = payload['robot_ip']
             self.control, self.receive = self.factory(payload['robot_ip'])
@@ -195,6 +330,10 @@ class ManualService:
                 return
             if self._stop_requested.is_set():
                 raise ValueError('Stop is pending')
+        if command == 'run_sequence':
+            self._execute_sequence(payload)
+            return
+        self._preview = None
         feedback = self._read()
         if feedback['safety_mode'] not in (1, 2):
             raise ValueError('Robot must be in normal or reduced safety mode to move')
@@ -276,6 +415,7 @@ class ManualService:
         self.control = self.receive = None
         with self._lock:
             self._connected = False
+            self._preview = None
             self._motion = self._feedback = None
             self._message = 'Disconnected'
         if errors:
@@ -312,8 +452,8 @@ class ManualService:
                 pass
             error = RuntimeError(f'{error}; stop failed: {stop_error}')
         with self._lock:
-            self._error = str(error)
-            self._message = 'Command failed'
+            self._error = None if isinstance(error, SequenceStopped) else str(error)
+            self._message = str(error) if isinstance(error, SequenceStopped) else 'Command failed'
 
     def _run(self):
         try:

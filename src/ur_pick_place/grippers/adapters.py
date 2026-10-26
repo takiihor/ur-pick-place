@@ -6,7 +6,15 @@ import time
 from ..controller import SequenceError
 
 
-class RG2:
+class Hooks:
+    def tick(self):
+        pass
+
+    def pause(self, seconds):
+        time.sleep(seconds)
+
+
+class RG2(Hooks):
     def __init__(self, config, robot_ip):
         from .rg2_driver import RG2Gripper
         self.config = config
@@ -14,21 +22,27 @@ class RG2:
                                  config.tool_index, config.timeout_s)
 
     def require_ready(self):
+        self.tick()
         state = self.driver.status()
         if state['busy'] or state['safety_failed'] or state['grip_detected']:
             raise SequenceError('Start with RG2 idle, fault-free, and empty')
 
     def open(self):
+        self.tick()
         c = self.config
-        self.driver.move(c.open_width_mm, c.release_force_n, require_release=True)
-        time.sleep(c.settle_s)
+        self.driver.move(c.open_width_mm, c.release_force_n, require_release=True,
+                         process_events=self.tick)
+        self.pause(c.settle_s)
 
     def grip(self):
+        self.tick()
         c = self.config
-        self.driver.move(c.grip_width_mm, c.grip_force_n, require_grip=True)
-        time.sleep(c.settle_s)
+        self.driver.move(c.grip_width_mm, c.grip_force_n, require_grip=True,
+                         process_events=self.tick)
+        self.pause(c.settle_s)
 
     def require_holding(self):
+        self.tick()
         state = self.driver.status()
         if state['busy'] or state['safety_failed'] or not state['grip_detected']:
             raise SequenceError('RG2 does not confirm a held object')
@@ -69,7 +83,7 @@ class RG2:
         self.driver.close()
 
 
-class Arduino:
+class Arduino(Hooks):
     def __init__(self, config, robot_ip=None):
         from .arduino_driver import ArduinoGripper
         config.require_live_ready()
@@ -81,25 +95,28 @@ class Arduino:
         c = self.config
         limits = c.grip_min_raw if holding else c.release_max_raw
         for _ in range(c.pressure_samples):
+            self.tick()
             pads = self.driver.pressure()
             values = (pads.fsr1, pads.fsr2)
             valid = all(v >= limit if holding else v <= limit for v, limit in zip(values, limits))
             if not valid:
                 label = 'grip' if holding else 'release'
                 raise SequenceError(f'Arduino {label} check failed: {values}, thresholds={limits}')
-            time.sleep(0.05)
+            self.pause(0.05)
 
     def require_ready(self):
         self._verify(False)
 
     def open(self):
+        self.tick()
         self.driver.open()
-        time.sleep(self.config.settle_s)
+        self.pause(self.config.settle_s)
         self._verify(False)
 
     def grip(self):
+        self.tick()
         getattr(self.driver, self.config.grip_command)()
-        time.sleep(self.config.settle_s)
+        self.pause(self.config.settle_s)
         self._verify(True)
 
     def require_holding(self):

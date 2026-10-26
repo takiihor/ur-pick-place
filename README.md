@@ -50,6 +50,54 @@ The same backend can be started with `ur-robot-ui` after package installation.
 It serves only on loopback. `--demo` never imports/connects RTDE and keeps its
 settings/poses separate from live recordings.
 
+### Test the full sequence with buttons
+
+The **Pick & place test** panel runs the complete cycle using the UI's existing
+RTDE connection. Keep Robot Bench connected; no separate terminal or second
+robot-control session is needed.
+
+1. Record your home, pick and placement poses in the pose library.
+2. Select them in **Home**, **Pick** and **Place**. Home uses recorded joints;
+   pick and place use recorded TCP coordinates.
+3. Choose **OnRobot RG2** or **Arduino gripper** from the **Gripper** dropdown.
+   Both drivers remain available and can be switched between tests.
+4. Set the gripper's values. RG2 uses open/grip widths and gripping force;
+   Arduino uses its serial port, tight/loose command and both pads' calibrated
+   grip/release thresholds.
+5. Expand **Force, approach & grasp offset** to adjust the approach heights,
+   contact/command forces, descent limits/speeds, loaded lift, retract distance,
+   earlier-contact backoff and base-frame XYZ grasp offset.
+6. Click **Preview cycle**, review the selected poses, gripper and parameters,
+   then click **Run one cycle**. Changing settings requires another preview.
+
+The six-stage progress strip shows home/open, pick approach, force search,
+offset/grip, verify/lift/home, and force-place/retract. Each run consumes its
+preview and performs exactly one cycle. Manual movement and pose recording
+are blocked during a cycle. The persistent **Stop motion** button cancels the
+sequence, stops active force mode or an arm move, and blocks subsequent steps.
+It does not open the gripper or command a recovery move. A lost UI heartbeat
+also cancels the sequence. The robot connection remains available after a
+normal cancellation; inspect the robot and gripper before testing again.
+Gripper communication is bounded by its configured timeout, so cancellation
+can wait for an outstanding jaw/status reply. This is not an emergency stop.
+
+**Camera target (optional)** accepts a pasted or loaded JSON six-number TCP
+pose in base-frame metres/radians. A supplied camera target overrides the saved
+pick pose. Detector/calibration processing still belongs to your camera app.
+The test choices are saved in `data/live/sequence.json` (or `data/demo/sequence.json`).
+Starting with `--config pick_place.json` initializes the recipe's other defaults.
+
+To try the complete button flow without hardware:
+
+```bash
+./start.sh --demo
+```
+
+Click **Connect RTDE**, **Load demo poses**, **Preview cycle**, then **Run one
+cycle**. Demo mode simulates both the robot and selected gripper and never
+contacts robot or gripper hardware. The force search is accelerated in the
+demo. Live sequence motion still requires validation on your actual cell.
+
 ### Record and recall poses
 
 The UI shows live base-frame TCP position, rotation-vector orientation and all
@@ -90,7 +138,7 @@ speed. Limits must cover the actual current TCP pose and every requested
 endpoint. The robot's own reachability/safety checks also run before movement;
 whole-link collisions and intermediate joint trajectories are not validated.
 
-### Use taught poses in pick/place
+### Use taught poses in the pick/place CLI
 
 Disconnect Robot Bench before running a pick/place job so the CLI can own the
 RTDE control connection. Recorded names can replace the recipe's coordinates:

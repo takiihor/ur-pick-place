@@ -36,6 +36,7 @@ function updateControls() {
   $('stop').disabled = !connected;
   $('save-settings').disabled = connected || busy;
   $('settings-form').querySelectorAll('input').forEach(input => { input.disabled = connected || busy; });
+  updateSequenceControls(connected, busy, safe);
 }
 function loadTarget(pose) { displayPose(pose).forEach((v, i) => { $(`target-${axes[i]}`).value = v.toFixed(3); }); }
 function renderPoses(poses) {
@@ -93,17 +94,18 @@ function render(data) {
     initialized = true;
   }
   if (data.error) showError(data.error);
-  renderPoses(data.poses); updateControls();
+  renderPoses(data.poses); renderSequence(data); updateControls();
 }
 async function poll() {
   try {
     const response = await fetch('/api/state', {cache: 'no-store'});
     if (!response.ok) throw new Error('Backend is unavailable');
     const data = await response.json();
+    if (!data.sequence) throw new Error('Restart the Robot Bench backend, then refresh this page to load the sequence controls.');
     if (pollFailed) showError('');
     pollFailed = false; render(data);
   } catch (error) {
-    pollFailed = true; showError('Connection to the local backend was lost. Movement controls are disabled.'); updateControls();
+    pollFailed = true; showError(error.message.startsWith('Restart the Robot Bench') ? error.message : 'Connection to the local backend was lost. Movement controls are disabled.'); updateControls();
   }
 }
 $('connect').onclick = () => command('/api/connect', {robot_ip: $('robot-ip').value});
@@ -138,3 +140,150 @@ setInterval(poll, 250);
 setInterval(() => post('/api/heartbeat').catch(() => {}), 500);
 post('/api/heartbeat').catch(() => {});
 poll();
+
+// Sequence controls use the same connection and worker as manual teaching.
+let sequenceInitialized = false, sequencePoseKey = '', sequencePreviewId = null, previewPayloadKey = null;
+function sequenceNumber(id) {
+  const raw = $(id).value;
+  if (raw === '' || !Number.isFinite(Number(raw))) throw new Error('Fill all active sequence settings with finite numbers.');
+  return Number(raw);
+}
+function invalidateSequence() {
+  sequencePreviewId = previewPayloadKey = null;
+  $('sequence-summary').classList.add('hidden');
+  $('sequence-status').textContent = 'Settings changed · preview again';
+  updateControls();
+}
+function sequencePayload() {
+  const defaults = state.sequence.defaults;
+  const cameraText = $('seq-camera-pose').value.trim();
+  const kind = $('sequence-gripper').value;
+  const gripper = {...defaults.gripper, kind, settle_s: sequenceNumber('seq-gripper-settle')};
+  // Save both drivers' settings, including currently hidden controls, so
+  // switching the selected driver does not erase the other configuration.
+  const optional = id => $(id).value === '' ? null : sequenceNumber(id);
+  gripper.open_width_mm = optional('seq-open-width') ?? defaults.gripper.open_width_mm;
+  gripper.grip_width_mm = optional('seq-grip-width') ?? defaults.gripper.grip_width_mm;
+  gripper.grip_force_n = optional('seq-grip-force') ?? defaults.gripper.grip_force_n;
+  gripper.serial_port = $('seq-serial-port').value.trim() || null;
+  gripper.grip_command = $('seq-grip-command').value;
+  gripper.grip_min_raw = [optional('seq-grip-min-1'), optional('seq-grip-min-2')];
+  gripper.release_max_raw = [optional('seq-release-max-1'), optional('seq-release-max-2')];
+  if (kind !== defaults.gripper.kind) gripper.timeout_s = kind === 'arduino' ? 2 : 8;
+  function probe(role) {
+    return {...defaults[`${role}_probe`], contact_force_n: sequenceNumber(`seq-${role}-contact`),
+      command_force_n: sequenceNumber(`seq-${role}-command`), max_descent_mm: sequenceNumber(`seq-${role}-descent`),
+      speed_mm_s: sequenceNumber(`seq-${role}-speed`)};
+  }
+  return {home_id: $('sequence-home').value, pick_id: $('sequence-pick').value, place_id: $('sequence-place').value,
+    camera_pose: cameraText ? JSON.parse(cameraText) : null,
+    options: {gripper, pick_approach_mm: sequenceNumber('seq-pick-approach'), place_approach_mm: sequenceNumber('seq-place-approach'),
+      pick_backoff_mm: sequenceNumber('seq-backoff'), lift_mm: sequenceNumber('seq-lift'), retract_mm: sequenceNumber('seq-retract'),
+      grasp_offset_mm: ['x', 'y', 'z'].map(axis => sequenceNumber(`seq-offset-${axis}`)),
+      pick_probe: probe('pick'), place_probe: probe('place')}};
+}
+function initializeSequence(data) {
+  const saved = data.sequence.selection || {};
+  const base = data.sequence.defaults;
+  const config = {...base, ...saved.options};
+  const gripper = {...base.gripper, ...config.gripper};
+  $('sequence-gripper').value = gripper.kind;
+  const values = {'seq-open-width': gripper.open_width_mm, 'seq-grip-width': gripper.grip_width_mm,
+    'seq-grip-force': gripper.grip_force_n, 'seq-gripper-settle': gripper.settle_s,
+    'seq-serial-port': gripper.serial_port || '/dev/ttyUSB0', 'seq-grip-command': gripper.grip_command,
+    'seq-grip-min-1': gripper.grip_min_raw[0], 'seq-grip-min-2': gripper.grip_min_raw[1],
+    'seq-release-max-1': gripper.release_max_raw[0], 'seq-release-max-2': gripper.release_max_raw[1],
+    'seq-pick-approach': config.pick_approach_mm, 'seq-place-approach': config.place_approach_mm,
+    'seq-backoff': config.pick_backoff_mm, 'seq-lift': config.lift_mm, 'seq-retract': config.retract_mm};
+  for (const [id, value] of Object.entries(values)) $(id).value = value ?? '';
+  ['x', 'y', 'z'].forEach((axis, i) => { $(`seq-offset-${axis}`).value = config.grasp_offset_mm[i]; });
+  for (const role of ['pick', 'place']) {
+    const probe = {...base[`${role}_probe`], ...config[`${role}_probe`]};
+    for (const [field, key] of Object.entries({contact:'contact_force_n', command:'command_force_n', descent:'max_descent_mm', speed:'speed_mm_s'})) {
+      $(`seq-${role}-${field}`).value = probe[key];
+    }
+  }
+  if (saved.camera_pose) $('seq-camera-pose').value = JSON.stringify(saved.camera_pose);
+  sequenceInitialized = true;
+}
+function renderSequence(data) {
+  if (!sequenceInitialized) initializeSequence(data);
+  const seq = data.sequence;
+  const key = JSON.stringify(data.poses.map(p => [p.id, p.name]));
+  if (key !== sequencePoseKey) {
+    sequencePoseKey = key;
+    const preferred = {home:['home_a', 'home', 'demo_home'], pick:['pick', 'positionA', 'demo_pick'], place:['drop', 'place', 'demo_place']};
+    for (const role of ['home', 'pick', 'place']) {
+      const select = $(`sequence-${role}`);
+      const selected = select.value || seq.selection?.[`${role}_id`];
+      select.replaceChildren(new Option('Choose a saved pose…', ''));
+      for (const pose of data.poses) select.add(new Option(pose.name, pose.id));
+      if (data.poses.some(p => p.id === selected)) select.value = selected;
+      else {
+        const match = preferred[role].map(name => data.poses.find(p => p.name === name)).find(Boolean);
+        if (match) select.value = match.id;
+      }
+    }
+  }
+  $('demo-poses').classList.toggle('hidden', !data.demo);
+  if (!seq.preview) sequencePreviewId = null;
+  $('sequence-status').textContent = seq.status === 'previewed' && !sequencePreviewId ? 'Preview again to run this cycle' : seq.message;
+  const index = seq.steps.findIndex(step => step[0] === seq.step);
+  document.querySelectorAll('#sequence-steps li').forEach((item, i) => {
+    item.classList.toggle('done', seq.status === 'completed' || i < index);
+    item.classList.toggle('active', seq.running && i === index);
+    item.classList.toggle('stopped', ['stopped', 'failed'].includes(seq.status) && i === index);
+  });
+}
+function updateSequenceControls(connected, busy, safe) {
+  const kind = $('sequence-gripper').value;
+  $('rg2-fields').classList.toggle('hidden', kind !== 'rg2');
+  $('arduino-fields').classList.toggle('hidden', kind !== 'arduino');
+  $('sequence-form').querySelectorAll('input, select, textarea').forEach(input => { input.disabled = !!busy; });
+  $(kind === 'rg2' ? 'arduino-fields' : 'rg2-fields').querySelectorAll('input, select').forEach(input => { input.disabled = true; });
+  if ($('seq-camera-pose').value.trim()) $('sequence-pick').disabled = true;
+  $('sequence-preview').disabled = !!busy;
+  $('demo-poses').disabled = !!busy;
+  $('sequence-run').disabled = !safe || !!busy || !sequencePreviewId || state?.sequence.preview?.id !== sequencePreviewId;
+}
+$('sequence-form').addEventListener('input', invalidateSequence);
+$('sequence-form').addEventListener('change', invalidateSequence);
+$('sequence-form').onsubmit = async event => {
+  event.preventDefault();
+  let payload;
+  try { payload = sequencePayload(); } catch (error) { return showError(error.message); }
+  requestPending += 1; updateControls(); showError('');
+  try {
+    const preview = await post('/api/sequence/preview', payload);
+    sequencePreviewId = preview.id; previewPayloadKey = JSON.stringify(payload);
+    $('sequence-summary').textContent = `${preview.demo ? 'DEMO' : preview.robot_ip} · ${preview.gripper === 'rg2' ? 'OnRobot RG2' : 'Arduino gripper'} · one cycle\n${preview.names.home} → ${preview.names.pick} → ${preview.names.home} → ${preview.names.place}\nGrasp offset: [${preview.grasp_offset_mm.join(', ')}] mm · pick/place contact: ${preview.pick_force_n}/${preview.place_force_n} N · transit: ${preview.tcp_speed_mm_s} mm/s\nPreview checks the workspace envelope; whole robot paths must have clearance.`;
+    $('sequence-summary').classList.remove('hidden');
+    await poll();
+  } catch (error) { sequencePreviewId = null; showError(error.message); }
+  finally { requestPending -= 1; updateControls(); }
+};
+$('sequence-run').onclick = async () => {
+  try {
+    if (!sequencePreviewId || JSON.stringify(sequencePayload()) !== previewPayloadKey) throw new Error('Settings changed. Preview again before running.');
+    const id = sequencePreviewId;
+    sequencePreviewId = null;
+    await command('/api/sequence/run', {preview_id:id});
+  } catch (error) { showError(error.message); }
+};
+$('demo-poses').onclick = async () => {
+  try {
+    const ids = await post('/api/sequence/demo-poses');
+    await poll();
+    for (const role of ['home', 'pick', 'place']) $(`sequence-${role}`).value = ids[`${role}_id`];
+    invalidateSequence(); toast('Demo home, pick and place poses loaded');
+  } catch (error) { showError(error.message); }
+};
+$('seq-camera-file').onchange = async event => {
+  try {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (file.size > 32768) throw new Error('Target JSON file is too large.');
+    $('seq-camera-pose').value = JSON.stringify(JSON.parse(await file.text()));
+    invalidateSequence();
+  } catch (error) { showError(error.message); }
+};

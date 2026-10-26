@@ -84,7 +84,8 @@ class Handler(BaseHTTPRequestHandler):
             service = self.server.service
             path = urlsplit(self.path).path
             commands = {'/api/connect': 'connect', '/api/disconnect': 'disconnect',
-                        '/api/jog': 'jog', '/api/move-tcp': 'move_tcp', '/api/move-saved': 'move_saved'}
+                        '/api/jog': 'jog', '/api/move-tcp': 'move_tcp', '/api/move-saved': 'move_saved',
+                        '/api/sequence/run': 'run_sequence'}
             if path in commands:
                 service.submit(commands[path], body)
                 return self._reply({'accepted': True}, 202)
@@ -100,6 +101,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(service.store.rename(body.get('id'), body.get('name')))
             if path == '/api/settings':
                 return self._reply(service.update_settings(body))
+            if path == '/api/sequence/preview':
+                return self._reply(service.preview_sequence(body))
+            if path == '/api/sequence/demo-poses':
+                return self._reply(service.seed_demo_poses())
             return self._reply({'error': 'Not found'}, 404)
         except (ValueError, TypeError) as exc:
             self._reply({'error': str(exc)}, 400)
@@ -120,6 +125,7 @@ def main(argv=None):
     directory = args.data_dir or Path('data') / ('demo' if args.demo else 'live')
     settings_path = directory / 'settings.json'
     try:
+        recipe = None
         if args.config:
             recipe = Recipe.load(args.config)
             settings = ManualSettings(recipe.robot_ip, recipe.workspace_min_m, recipe.workspace_max_m,
@@ -130,7 +136,8 @@ def main(argv=None):
         else:
             settings = ManualSettings()
         service = ManualService(settings, PoseStore(directory / 'poses.json'), demo=args.demo,
-                                settings_path=settings_path)
+                                settings_path=settings_path, recipe=recipe,
+                                sequence_path=directory / 'sequence.json')
         try:
             server = ControlServer(('127.0.0.1', args.port), service)
         except BaseException:
