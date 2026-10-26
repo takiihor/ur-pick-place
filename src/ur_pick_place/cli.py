@@ -1,5 +1,6 @@
 """Preview without hardware by default; --execute connects and commands hardware."""
 import argparse
+from dataclasses import replace
 import json
 import logging
 from pathlib import Path
@@ -13,6 +14,11 @@ def main(argv=None):
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--pick-pose-file', type=Path,
                         help='Camera-derived base-frame TCP pose as a JSON six-number array')
+    parser.add_argument('--pose-store', type=Path, default=Path('data/live/poses.json'),
+                        help='Named poses recorded with Robot Bench')
+    parser.add_argument('--home-pose', help='Use the recorded joint angles of this named pose as home')
+    parser.add_argument('--pick-pose', help='Use the recorded TCP pose of this named pose as pick')
+    parser.add_argument('--place-pose', help='Use the recorded TCP pose of this named pose as placement reference')
     parser.add_argument('--cycles', type=int, default=1)
     parser.add_argument('--cycle-wait-s', type=float, default=2.0)
     mode = parser.add_mutually_exclusive_group()
@@ -26,6 +32,19 @@ def main(argv=None):
         from .config import number
         number(args.cycle_wait_s, 'cycle_wait_s', low=0, high=3600)
         recipe = Recipe.load(args.config)
+        if args.home_pose or args.pick_pose or args.place_pose:
+            from .poses import PoseStore
+            store = PoseStore(args.pose_store)
+            overrides = {}
+            for name, field, coordinates in ((args.home_pose, 'home_joints', 'joints_rad'),
+                                             (args.pick_pose, 'pick_pose', 'tcp_pose_m_rad'),
+                                             (args.place_pose, 'place_pose', 'tcp_pose_m_rad')):
+                if name:
+                    saved = store.by_name(name)
+                    if args.execute and saved.get('demo'):
+                        raise ValueError('Demo poses cannot be used for hardware execution')
+                    overrides[field] = saved[coordinates]
+            recipe = replace(recipe, **overrides)
         target = None
         if args.pick_pose_file:
             target = vector(json.loads(args.pick_pose_file.read_text()), 6, 'Camera pick pose')

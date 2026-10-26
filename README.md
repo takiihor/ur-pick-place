@@ -16,6 +16,98 @@ The package executes:
 Both OnRobot RG2 and the supplied Arduino servo/pressure-pad firmware are
 supported. RG2 is the default, matching the previously tested procedure.
 
+## Start the backend and teaching UI
+
+From a clone of this repository:
+
+```bash
+chmod +x start.sh  # already executable in Git
+./start.sh
+```
+
+`start.sh` finds Python 3.12 (or 3.10–3.13), creates `.venv`, installs the
+package and hardware dependencies, starts the local backend, and opens Robot
+Bench at **http://127.0.0.1:8765**. Subsequent starts reuse the environment;
+dependencies are refreshed when package requirements change. Set
+`PYTHON_BIN=/path/to/python3.12` before the first start to select an interpreter.
+No system packages are installed. Creating a virtual environment requires
+Python's `venv` support on your system.
+
+The backend starts disconnected: enter your robot IP and click **Connect
+RTDE**. Configure TCP/payload and remote control on the robot as appropriate.
+Only one application should own RTDE control. Disconnect the original GUI or
+other robot controllers before connecting Robot Bench.
+
+```bash
+./start.sh --demo                     # try the UI without robot hardware
+./start.sh --config pick_place.json   # initialize IP, workspace and speed limits
+./start.sh --no-browser --port 8765    # backend only; open the URL yourself
+./start.sh setup                      # install dependencies without starting
+./start.sh test                       # offline tests
+```
+
+The same backend can be started with `ur-robot-ui` after package installation.
+It serves only on loopback. `--demo` never imports/connects RTDE and keeps its
+settings/poses separate from live recordings.
+
+### Record and recall poses
+
+The UI shows live base-frame TCP position, rotation-vector orientation and all
+six joint angles. To teach a position:
+
+1. Connect, then position the TCP using the step buttons or absolute target.
+2. Wait for motion to finish, enter a name such as `home_a`, and click
+   **Record current pose**.
+3. Use **Rename** in the pose library to change its name. Names must be unique.
+4. **Load target** fills the absolute target fields without moving anything.
+   **Move TCP** recalls the saved TCP pose with `moveL`; **Move joints** recalls
+   its recorded joint angles with `moveJ`.
+
+Records are saved immediately and atomically to `data/live/poses.json`, with
+TCP coordinates in metres/radians, joint angles in radians, a timestamp and the
+robot address. **Export JSON** downloads the same portable store. Files persist
+across restarts. Demo records live in `data/demo/poses.json` and cannot be used
+for live motion. Use `--data-dir PATH` to choose a different storage directory.
+
+### TCP movement controls
+
+- Position buttons apply a bounded step along robot-base X, Y or Z, in mm.
+- Orientation buttons compose a physical rotation about robot-base X, Y or Z,
+  in degrees; they do not add Euler angles to the rotation-vector components.
+- Each button click starts one move. The next command is blocked until it
+  finishes. Step size is adjustable up to 10 mm or 10 degrees per click.
+- The absolute target accepts XYZ in mm and Rx/Ry/Rz **rotation-vector
+  components in degrees**, not roll/pitch/yaw. **Use current** copies live
+  feedback. **Move to TCP target** sends the explicit linear movement.
+- **Stop motion** interrupts an asynchronous movement through RTDE. Closing
+  the backend stops its motion and control script; losing fresh robot feedback
+  or the UI heartbeat stops motion and disconnects. Keep the tab active during
+  movement. This is a software stop, not an emergency-stop function.
+
+Expand **Connection & motion limits** while disconnected to set TCP/joint
+speeds and XYZ workspace limits. Defaults are 20 mm/s TCP and 0.1 rad/s joint
+speed. Limits must cover the actual current TCP pose and every requested
+endpoint. The robot's own reachability/safety checks also run before movement;
+whole-link collisions and intermediate joint trajectories are not validated.
+
+### Use taught poses in pick/place
+
+Disconnect Robot Bench before running a pick/place job so the CLI can own the
+RTDE control connection. Recorded names can replace the recipe's coordinates:
+
+```bash
+./start.sh pick-place --config pick_place.json \
+  --home-pose home_a --pick-pose pick --place-pose drop --dry-run
+
+# Add --execute instead of --dry-run after reviewing the configured job.
+```
+
+`--home-pose` uses saved joint angles; `--pick-pose` and `--place-pose` use saved
+TCP coordinates. The default `--pose-store` is `data/live/poses.json`.
+`--pick-pose-file target.json` can still override the pick TCP pose with a new
+camera-derived target. Preview can inspect demo records via `--pose-store`,
+but live execution rejects records marked as demo.
+
 ## Install
 
 Use Python 3.12 for hardware operation (validated dependency installation).

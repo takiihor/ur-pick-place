@@ -13,4 +13,5 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e .
       - run: python -m unittest discover -s tests -v
+      - run: bash -n start.sh
       - run: ur-pick-place --config examples/rg2.json --dry-run

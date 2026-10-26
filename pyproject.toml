@@ -17,6 +17,10 @@ hardware = ["ur-rtde>=1.5.0", "pyserial>=3.5"]
 [project.scripts]
 ur-pick-place = "ur_pick_place.cli:main"
 arduino-gripper = "ur_pick_place.grippers.arduino_driver:main"
+ur-robot-ui = "ur_pick_place.ui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ur_pick_place = ["web/*.html", "web/*.css", "web/*.js"]
