@@ -4,10 +4,12 @@ const axes = ['x', 'y', 'z', 'rx', 'ry', 'rz'];
 const token = document.querySelector('meta[name="control-token"]').content;
 let state = null, renameId = null, posesKey = '', initialized = false, requestPending = 0;
 let pollFailed = false, toastTimer;
+let activeJog = null;
 const degrees = value => value * 180 / Math.PI;
 const displayPose = pose => pose.slice(0, 3).map(v => v * 1000).concat(pose.slice(3).map(degrees));
 const fixed = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : '—';
 function showPage(page, navigate = false) {
+  endJog();
   page = page === 'testing' ? 'testing' : 'waypoints';
   $('waypoint-page').hidden = page !== 'waypoints';
   $('testing-page').hidden = page !== 'testing';
@@ -54,14 +56,18 @@ async function command(path, body = {}, success) {
 }
 function updateControls() {
   const connected = !!state?.connected;
-  const busy = requestPending || !!state?.pending || !!state?.moving || pollFailed;
+  const busy = requestPending || !!state?.pending || !!state?.moving || pollFailed || !!activeJog;
   const fresh = connected && state?.feedback && state.feedback.age_s < .5;
   const safe = fresh && [1, 2].includes(state.feedback.safety_mode);
-  document.querySelectorAll('.motion').forEach(button => { button.disabled = !safe || busy; });
+  document.querySelectorAll('.motion').forEach(button => { button.disabled = !safe || (!!busy && button !== activeJog?.button); });
+  $('position-speed').disabled = !!busy;
+  $('rotation-speed').disabled = !!busy;
   $('connect').disabled = connected || busy;
   $('disconnect').disabled = !connected || requestPending || !!state?.pending;
   $('robot-ip').disabled = connected || busy;
   $('record').disabled = !fresh || busy;
+  document.querySelectorAll('.pose-update').forEach(button => { button.disabled = !fresh || !!busy; });
+  updateRecordMode();
   $('copy-current').disabled = !fresh;
   $('stop').disabled = !connected;
   $('save-settings').disabled = connected || busy;
@@ -71,6 +77,17 @@ function updateControls() {
   updateSequenceControls(connected, busy, safe);
 }
 function loadTarget(pose) { displayPose(pose).forEach((v, i) => { $(`target-${axes[i]}`).value = v.toFixed(3); }); }
+function matchingPose() {
+  const name = $('pose-name').value.trim().toLowerCase();
+  return state?.poses.find(pose => pose.name.toLowerCase() === name);
+}
+function updateRecordMode() {
+  const existing = matchingPose();
+  $('record').textContent = existing ? 'Update saved waypoint' : '＋ Record current pose';
+  $('record-mode').textContent = existing
+    ? `Replace “${existing.name}” with the current TCP pose and joint angles.`
+    : 'Enter an existing name to update that waypoint, or a new name to create one.';
+}
 function renderPoses(poses) {
   const key = JSON.stringify(poses);
   if (key === posesKey) return;
@@ -95,11 +112,15 @@ function renderPoses(poses) {
     const load = document.createElement('button'); load.textContent = 'Load target'; load.onclick = () => { loadTarget(pose.tcp_pose_m_rad); toast(`Loaded ${pose.name} into TCP target`); };
     const tcp = document.createElement('button'); tcp.className = 'motion'; tcp.textContent = 'Move TCP'; tcp.onclick = () => command('/api/move-saved', {id: pose.id, mode: 'tcp'});
     const joint = document.createElement('button'); joint.className = 'motion'; joint.textContent = 'Move joints'; joint.onclick = () => command('/api/move-saved', {id: pose.id, mode: 'joint'});
-    actions.append(load, tcp, joint); card.append(head, coordinates, date, actions); $('saved-poses').append(card);
+    const update = document.createElement('button'); update.className = 'pose-update'; update.textContent = 'Update from current';
+    update.setAttribute('aria-label', `Update ${pose.name} from current robot position`);
+    update.onclick = () => command('/api/poses', {id:pose.id}, `Updated ${pose.name}`);
+    actions.append(load, tcp, joint, update); card.append(head, coordinates, date, actions); $('saved-poses').append(card);
   }
 }
 function render(data) {
   state = data;
+  if (activeJog && (!data.connected || data.error || ![1, 2].includes(data.feedback?.safety_mode))) endJog();
   $('demo-banner').classList.toggle('hidden', !data.demo);
   $('mode').textContent = data.demo ? 'DEMO' : 'LOCAL · RTDE'; $('mode').classList.toggle('demo', data.demo);
   $('connection').classList.toggle('online', data.connected);
@@ -123,12 +144,14 @@ function render(data) {
   }
   if (!initialized) {
     const settings = data.settings;
+    $('position-speed').value = Math.min(20, settings.tcp_speed_mm_s);
     $('robot-ip').value = settings.robot_ip;
     $('tcp-speed').value = settings.tcp_speed_mm_s;
     $('joint-speed').value = settings.joint_speed_rad_s;
     ['x', 'y', 'z'].forEach((axis, i) => { $(`min-${axis}`).value = settings.workspace_min_m[i] * 1000; $(`max-${axis}`).value = settings.workspace_max_m[i] * 1000; });
     initialized = true;
   }
+  updateJogSpeeds();
   if (data.error) showError(data.error);
   renderPoses(data.poses); renderSequence(data); updateControls();
 }
@@ -141,25 +164,90 @@ async function poll() {
     if (pollFailed) showError('');
     pollFailed = false; render(data);
   } catch (error) {
+    endJog();
     pollFailed = true; showError(error.message.startsWith('Restart the Robot Bench') ? error.message : 'Connection to the local backend was lost. Movement controls are disabled.'); updateControls();
   }
 }
 $('connect').onclick = () => command('/api/connect', {robot_ip: $('robot-ip').value});
 $('disconnect').onclick = () => command('/api/disconnect');
-$('stop').onclick = () => command('/api/stop');
+$('stop').onclick = () => { endJog(); command('/api/stop'); };
 $('joint-test-pose').onchange = updateControls;
 $('joint-test-move').onclick = () => command('/api/move-saved', {id:$('joint-test-pose').value, mode:'joint'});
 $('copy-current').onclick = () => { if (state?.feedback) loadTarget(state.feedback.tcp_pose_m_rad); };
+function endJog() {
+  const jog = activeJog;
+  if (!jog) return;
+  requestPending += 1;
+  activeJog = null;
+  clearInterval(jog.timer);
+  jog.button.classList.remove('jog-active');
+  // Stop immediately, then once more after start is acknowledged, so a quick
+  // release cannot race a delayed start request.
+  post('/api/stop').catch(error => showError(error.message));
+  jog.start.finally(() => post('/api/stop').catch(error => showError(error.message)))
+    .finally(() => { requestPending -= 1; updateControls(); });
+  updateControls();
+}
+function beginJog(button, key = null) {
+  if (button.disabled || activeJog || requestPending) return;
+  const axis = button.dataset.axis;
+  const speed = Number($(axis.startsWith('r') ? 'rotation-speed' : 'position-speed').value);
+  const limit = axis.startsWith('r') ? 10 : Math.min(100, state?.settings?.tcp_speed_mm_s ?? 20);
+  if (!Number.isFinite(speed) || speed <= 0 || speed > limit) return showError(`Choose a jog speed greater than 0 and at most ${limit}.`);
+  const jog = {button, key, id: crypto.randomUUID()};
+  activeJog = jog;
+  button.classList.add('jog-active');
+  showError('');
+  jog.start = post('/api/jog/start', {axis, speed: speed * Number(button.dataset.sign), jog_id: jog.id})
+    .catch(error => { showError(error.message); if (activeJog === jog) endJog(); });
+  jog.timer = setInterval(() => {
+    post('/api/heartbeat', {jog_id: jog.id}).catch(() => { if (activeJog === jog) endJog(); });
+  }, 150);
+  updateControls();
+}
+function updateJogSpeeds() {
+  const limit = Math.min(100, state?.settings?.tcp_speed_mm_s ?? 20);
+  $('position-speed').max = limit;
+  $('position-speed').value = Math.min(Number($('position-speed').value), limit);
+  $('position-speed-value').textContent = `${Number($('position-speed').value).toFixed(1)} mm/s`;
+  $('position-speed-limit').textContent = `${limit} mm/s`;
+  $('rotation-speed-value').textContent = `${Number($('rotation-speed').value).toFixed(1)} deg/s`;
+}
+$('position-speed').addEventListener('input', updateJogSpeeds);
+$('rotation-speed').addEventListener('input', updateJogSpeeds);
 document.querySelectorAll('[data-axis]').forEach(button => {
-  button.onclick = () => {
-    const axis = button.dataset.axis;
-    const size = Number($(axis.startsWith('r') ? 'rotation-step' : 'position-step').value);
-    if (!Number.isFinite(size) || size <= 0 || size > 10) return showError('Choose an increment greater than 0 and at most 10.');
-    command('/api/jog', {axis, step: size * Number(button.dataset.sign)});
-  };
+  button.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || activeJog) return;
+    event.preventDefault();
+    button.focus();
+    button.setPointerCapture(event.pointerId);
+    beginJog(button);
+  });
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(name, endJog);
+  button.addEventListener('keydown', event => {
+    if (![' ', 'Enter'].includes(event.key)) return;
+    event.preventDefault();
+    if (!event.repeat) beginJog(button, event.key);
+  });
+  button.addEventListener('keyup', event => {
+    if (event.key === activeJog?.key) { event.preventDefault(); endJog(); }
+  });
+  button.addEventListener('blur', endJog);
+  button.addEventListener('contextmenu', event => { event.preventDefault(); endJog(); });
 });
+window.addEventListener('pointerup', endJog);
+window.addEventListener('pointercancel', endJog);
+window.addEventListener('blur', endJog);
+window.addEventListener('pagehide', endJog);
+document.addEventListener('visibilitychange', () => { if (document.hidden) endJog(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') endJog(); });
 $('target-form').onsubmit = event => { event.preventDefault(); const pose = axes.map(axis => Number($(`target-${axis}`).value)); if (pose.every(Number.isFinite)) command('/api/move-tcp', {pose_mm_deg: pose}); };
-$('record-form').onsubmit = async event => { event.preventDefault(); await command('/api/poses', {name: $('pose-name').value}, 'Pose recorded'); };
+$('pose-name').addEventListener('input', updateRecordMode);
+$('record-form').onsubmit = async event => {
+  event.preventDefault();
+  const existing = matchingPose();
+  await command('/api/poses', existing ? {id:existing.id} : {name:$('pose-name').value}, existing ? `Updated ${existing.name}` : 'Pose recorded');
+};
 $('rename-form').onsubmit = async event => {
   event.preventDefault();
   try { await post('/api/poses/rename', {id: renameId, name: $('rename-name').value}); $('rename-dialog').close(); await poll(); toast('Pose renamed'); }

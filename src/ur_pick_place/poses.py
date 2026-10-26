@@ -62,16 +62,21 @@ class PoseStore:
         if any(p['id'] != excluding and p['name'].casefold() == name.casefold() for p in self._poses):
             raise ValueError('A pose with that name already exists')
 
-    def save(self, name, tcp_pose, joints, *, robot_ip, demo=False):
+    def save(self, name, tcp_pose, joints, *, robot_ip, demo=False, ident=None):
         name = pose_name(name)
-        pose = dict(id=uuid.uuid4().hex, name=name,
+        pose = dict(id=ident if ident is not None else uuid.uuid4().hex, name=name,
                     tcp_pose_m_rad=vector(tcp_pose, 6, 'TCP pose'),
                     joints_rad=vector(joints, 6, 'Joints'),
                     recorded_at=datetime.now(timezone.utc).isoformat(),
                     robot_ip=robot_ip, demo=bool(demo))
         with self._lock:
-            self._unique(name)
-            updated = [*self._poses, pose]
+            if ident is not None:
+                existing = self.get(ident)
+                if bool(existing.get('demo')) != bool(demo):
+                    raise ValueError('Demo and live poses cannot be mixed')
+            self._unique(name, excluding=ident)
+            updated = ([pose if p['id'] == ident else p for p in self._poses]
+                       if ident is not None else [*self._poses, pose])
             self._write(updated)
             self._poses = updated
         return dict(pose)

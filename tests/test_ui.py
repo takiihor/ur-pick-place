@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 
 from ur_pick_place.manual import ManualService, ManualSettings
@@ -63,6 +64,57 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(content), {'version':1, 'poses':[]})
         self.assertIn('Content-Disposition', dict(headers))
+
+    def test_existing_waypoint_can_be_updated_by_name_or_id(self):
+        headers = {'Content-Type':'application/json', 'X-Control-Token':self.server.token}
+        self.request('POST', '/api/connect', {}, headers)
+        deadline = time.monotonic()+2
+        while not self.service.state()['connected'] or self.service.state()['pending']:
+            if time.monotonic() > deadline:
+                self.fail('Timed out waiting for connection')
+            time.sleep(.01)
+        status, body, _ = self.request('POST', '/api/poses', {'name':'pick'}, headers)
+        self.assertEqual(status, 201)
+        original = json.loads(body)
+        self.service.control.pose[0] += .01
+        deadline = time.monotonic()+2
+        while self.service.state()['feedback']['tcp_pose_m_rad'][0] == original['tcp_pose_m_rad'][0]:
+            if time.monotonic() > deadline:
+                self.fail('Timed out waiting for feedback')
+            time.sleep(.01)
+        status, body, _ = self.request('POST', '/api/poses', {'name':' PICK '}, headers)
+        self.assertEqual(status, 201)
+        updated = json.loads(body)
+        self.assertEqual(updated['id'], original['id'])
+        self.assertNotEqual(updated['tcp_pose_m_rad'], original['tcp_pose_m_rad'])
+        status, body, _ = self.request('POST', '/api/poses', {'id':original['id']}, headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['id'], original['id'])
+        self.assertEqual(len(self.service.store.list()), 1)
+        self.assertEqual(self.request('POST', '/api/poses', {'id':'missing'}, headers)[0], 400)
+
+    def test_held_jog_route_heartbeat_and_stop(self):
+        headers = {'Content-Type':'application/json', 'X-Control-Token':self.server.token}
+
+        def wait_until(predicate):
+            deadline = time.monotonic()+2
+            while not predicate():
+                if time.monotonic() > deadline:
+                    self.fail('Timed out waiting for worker')
+                time.sleep(.01)
+
+        self.request('POST', '/api/connect', {}, headers)
+        wait_until(lambda: self.service.state()['connected'] and not self.service.state()['pending'])
+        payload = {'axis':'x', 'speed':1, 'jog_id':'http-held'}
+        self.assertEqual(self.request('POST', '/api/jog/start', payload, headers)[0], 202)
+        wait_until(lambda: self.service.state()['moving'] and not self.service.state()['pending'])
+        for _ in range(4):
+            self.assertEqual(self.request('POST', '/api/heartbeat', {'jog_id':'http-held'}, headers)[0], 200)
+            time.sleep(.2)
+        self.assertTrue(self.service.state()['moving'])
+        self.assertEqual(self.request('POST', '/api/stop', {}, headers)[0], 202)
+        wait_until(lambda: not self.service.state()['moving'])
+        self.assertTrue(self.service.state()['connected'])
 
     def test_sequence_preview_routes_do_not_move_hardware(self):
         headers = {'Content-Type':'application/json', 'X-Control-Token':self.server.token}

@@ -121,10 +121,14 @@ demo. Live sequence motion still requires validation on your actual cell.
 The UI shows live base-frame TCP position, rotation-vector orientation and all
 six joint angles. To teach a position:
 
-1. Connect, then position the TCP using the step buttons or absolute target.
+1. Connect, then position the TCP using the hold-to-move buttons or absolute target.
 2. Wait for motion to finish, enter a name such as `home_a`, and click
    **Record current pose**.
-3. Use **Rename** in the pose library to change its name. Names must be unique.
+3. To replace a waypoint, move to the new position and click **Update from current**
+   on its saved card, or enter the same name and click **Update saved waypoint**.
+   This updates both TCP coordinates and joint angles, keeping its ID and name.
+   Updates require fresh feedback and a stationary robot. Preview any sequence again
+   after updating its waypoints. Use **Rename** to change a name; names must be unique.
 4. **Load target** fills the absolute target fields without moving anything.
    **Move TCP** recalls the saved TCP pose with `moveL`; **Move joints** recalls
    its recorded joint angles with `moveJ`.
@@ -137,11 +141,16 @@ for live motion. Use `--data-dir PATH` to choose a different storage directory.
 
 ### TCP movement controls
 
-- Position buttons apply a bounded step along robot-base X, Y or Z, in mm.
+- Hold a position button to jog continuously along robot-base X, Y or Z.
+  Release to stop. The movement speed slider is in mm/s, up to the configured TCP speed limit
+  (maximum 100 mm/s). Jogging starts at 20 mm/s, or the configured limit if lower.
 - Orientation buttons compose a physical rotation about robot-base X, Y or Z,
-  in degrees; they do not add Euler angles to the rotation-vector components.
-- Each button click starts one move. The next command is blocked until it
-  finishes. Step size is adjustable up to 10 mm or 10 degrees per click.
+  at the selected deg/s; they do not add Euler angles to the rotation-vector components.
+- Hold with a mouse, touch, or Space/Enter on a focused button. Orientation
+  speed slider starts at 5 deg/s and is adjustable up to 10 deg/s. Release, lost focus, navigation, or a
+  missing held-button heartbeat stops jogging. The backend checks workspace
+  and robot safety limits ahead of motion; other moves are blocked while jogging.
+  A continuous hold is limited to 120 seconds; release and press again to resume.
 - The absolute target accepts XYZ in mm and Rx/Ry/Rz **rotation-vector
   components in degrees**, not roll/pitch/yaw. **Use current** copies live
   feedback. **Move to TCP target** sends the explicit linear movement.

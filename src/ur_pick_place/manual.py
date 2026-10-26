@@ -10,9 +10,12 @@ import time
 
 from .config import construct, number, vector
 from .geometry import rotate_base
-from .poses import atomic_json
+from .poses import atomic_json, pose_name
 from .controller import PickPlaceController
 from .sequence_ui import STEPS, DemoGripper, SequenceStopped, SessionRobot, initial_recipe, resolve_recipe
+
+
+JOG_STOP_ACCEL = 1.0
 
 
 @dataclass
@@ -84,6 +87,8 @@ class ManualService:
         self._message = 'Ready to connect'
         self._generation = 0
         self._heartbeat_at = time.monotonic()
+        self._jog_id = None
+        self._jog_at = 0
         self._last_timestamp = None
         self._fresh_at = time.monotonic()
         self.control = self.receive = None
@@ -108,13 +113,16 @@ class ManualService:
             result['poses'] = self.store.list()
             return result
 
-    def heartbeat(self):
+    def heartbeat(self, jog_id=None):
         with self._lock:
             self._heartbeat_at = time.monotonic()
+            if jog_id is not None and jog_id == self._jog_id:
+                self._jog_at = self._heartbeat_at
 
     def stop(self):
         with self._lock:
             self._generation += 1  # Cancel any movement queued before this stop.
+            self._jog_id = None
             self._message = 'Stop requested'
             self._stop_requested.set()
 
@@ -122,7 +130,7 @@ class ManualService:
         payload = {} if payload is None else payload
         if not isinstance(payload, dict):
             raise ValueError('Command must be a JSON object')
-        if command not in ('connect', 'disconnect', 'jog', 'move_tcp', 'move_saved', 'run_sequence'):
+        if command not in ('connect', 'disconnect', 'jog', 'jog_start', 'move_tcp', 'move_saved', 'run_sequence'):
             raise ValueError('Unknown robot command')
         with self._lock:
             if self._shutdown.is_set():
@@ -144,6 +152,11 @@ class ManualService:
                     raise ValueError('Preview the current sequence before running')
                 if self._preview['recipe'].robot_ip != self.settings.robot_ip:
                     raise ValueError('Connection changed; preview again')
+            if command == 'jog_start':
+                jog_id = payload.get('jog_id')
+                if not isinstance(jog_id, str) or not 1 <= len(jog_id) <= 100:
+                    raise ValueError('Jog requires a held-button identifier')
+                self._jog_id, self._jog_at = jog_id, time.monotonic()
             self._error = None
             self._pending = command
             self._queue.put_nowait((command, payload, self._generation))
@@ -270,14 +283,24 @@ class ManualService:
                         self._sequence['running'] = False
                     self._stop_requested.clear()
 
-    def record(self, name):
+    def record(self, name=None, *, ident=None):
         with self._lock:
             feedback = self._feedback
             if (not self._connected or self._pending or self._motion or not feedback
                     or time.monotonic() - feedback['received_at'] > .5):
                 raise ValueError('Recording requires a connected, stationary robot with fresh feedback')
-            return self.store.save(name, feedback['tcp_pose_m_rad'], feedback['joints_rad'],
-                                   robot_ip=self.settings.robot_ip, demo=self.demo)
+            if ident is not None:
+                name = self.store.get(ident)['name']
+            else:
+                name = pose_name(name)
+                existing = next((p for p in self.store.list() if p['name'].casefold() == name.casefold()), None)
+                if existing:
+                    ident, name = existing['id'], existing['name']
+            saved = self.store.save(name, feedback['tcp_pose_m_rad'], feedback['joints_rad'],
+                                    robot_ip=self.settings.robot_ip, demo=self.demo, ident=ident)
+            if ident is not None:
+                self._preview = None
+            return saved
 
     def _workspace(self, pose):
         pose = vector(pose, 6, 'TCP target')
@@ -340,6 +363,25 @@ class ManualService:
         # Starting outside the configured envelope is visible, but cannot be
         # bypassed by asking for a target inside it.
         self._workspace(feedback['tcp_pose_m_rad'])
+        if command == 'jog_start':
+            axes = ('x', 'y', 'z', 'rx', 'ry', 'rz')
+            if payload.get('axis') not in axes:
+                raise ValueError('Choose a valid jog axis')
+            index = axes.index(payload['axis'])
+            limit = 100 if index < 3 else 10
+            speed = number(payload.get('speed'), 'Jog speed', low=-limit, high=limit)
+            if speed == 0:
+                raise ValueError('Jog speed cannot be zero')
+            if index < 3:
+                speed = math.copysign(min(abs(speed), self.settings.tcp_speed_mm_s), speed)
+            velocity = [0.0]*6
+            velocity[index] = speed/1000 if index < 3 else math.radians(speed)
+            with self._lock:
+                self._motion = dict(mode='jog', index=index, speed=speed,
+                                    velocity=velocity, deadline=time.monotonic()+120)
+                self._message = 'Jogging TCP · release to stop'
+            self._poll_jog(feedback)
+            return
         mode = 'tcp'
         if command == 'jog':
             axes = ('x', 'y', 'z', 'rx', 'ry', 'rz')
@@ -392,13 +434,39 @@ class ManualService:
         with self._lock:
             motion = self._motion
         if motion and self.control:
-            if motion['mode'] == 'joint':
+            if motion['mode'] == 'jog':
+                if self.control.speedStop(JOG_STOP_ACCEL) is not True:
+                    raise RuntimeError('Robot rejected the jog stop')
+            elif motion['mode'] == 'joint':
                 self.control.stopJ(1.0)
             else:
                 self.control.stopL(1.0)
             with self._lock:
                 self._motion = None
+                self._jog_id = None
                 self._message = 'Movement stopped'
+
+    def _poll_jog(self, feedback):
+        with self._lock:
+            motion = self._motion
+            expired = self._jog_id is None or time.monotonic()-self._jog_at > .6
+        if expired or self._stop_requested.is_set():
+            self._stop_motion()
+            return
+        pose = self._workspace(feedback['tcp_pose_m_rad'])
+        index, speed = motion['index'], motion['speed']
+        # Check ahead beyond the worker interval and braking distance.
+        horizon = .3 + abs(motion['velocity'][index])/JOG_STOP_ACCEL
+        target = list(pose)
+        if index < 3:
+            target[index] += speed/1000*horizon
+        else:
+            target = rotate_base(target, index-3, speed*horizon)
+        self._workspace(target)
+        if self.control.isPoseWithinSafetyLimits(target) is not True:
+            raise ValueError('Jog would reach robot safety limits')
+        if self.control.speedL(motion['velocity'], self.settings.tcp_accel_m_s2, .05) is not True:
+            raise RuntimeError('Robot rejected the jog movement')
 
     def _disconnect(self):
         errors = []
@@ -417,6 +485,7 @@ class ManualService:
             self._connected = False
             self._preview = None
             self._motion = self._feedback = None
+            self._jog_id = None
             self._message = 'Disconnected'
         if errors:
             raise RuntimeError('Disconnect/stop failed: ' + '; '.join(errors))
@@ -434,6 +503,9 @@ class ManualService:
                 raise RuntimeError('UI heartbeat lost; stopping movement')
             if time.monotonic() > motion['deadline']:
                 raise RuntimeError('Movement timed out')
+            if motion['mode'] == 'jog':
+                self._poll_jog(self._feedback)
+                return
             progress = self.control.getAsyncOperationProgress()
             if progress >= 0:
                 motion['started'] = True
