@@ -1,0 +1,81 @@
+{
+  "robot_ip": "192.168.0.10",
+  "home_joints": [
+    0,
+    -1.57,
+    1.57,
+    -1.57,
+    -1.57,
+    0
+  ],
+  "pick_pose": [
+    0.4,
+    -0.1,
+    0.25,
+    0,
+    3.141592653589793,
+    0
+  ],
+  "place_pose": [
+    0.45,
+    -0.17,
+    0.2,
+    0,
+    3.141592653589793,
+    0
+  ],
+  "workspace_min_m": [
+    -0.9,
+    -0.9,
+    0.02
+  ],
+  "workspace_max_m": [
+    0.9,
+    0.9,
+    1.2
+  ],
+  "pick_approach_mm": 100,
+  "place_approach_mm": 100,
+  "pick_backoff_mm": 50,
+  "grasp_offset_mm": [
+    0,
+    0,
+    0
+  ],
+  "lift_mm": 100,
+  "retract_mm": 100,
+  "return_home": false,
+  "motion": {
+    "joint_speed_rad_s": 0.1,
+    "joint_accel_rad_s2": 0.2,
+    "transit_speed_mm_s": 20,
+    "grasp_speed_mm_s": 10,
+    "tcp_accel_m_s2": 0.1,
+    "settle_s": 0.5
+  },
+  "pick_probe": {
+    "contact_force_n": 10,
+    "command_force_n": 12,
+    "speed_mm_s": 5,
+    "max_descent_mm": 150,
+    "timeout_s": 45
+  },
+  "place_probe": {
+    "contact_force_n": 10,
+    "command_force_n": 12,
+    "speed_mm_s": 5,
+    "max_descent_mm": 150,
+    "timeout_s": 45
+  },
+  "gripper": {
+    "kind": "rg2",
+    "port": 41414,
+    "tool_index": 0,
+    "open_width_mm": 80,
+    "grip_width_mm": 20,
+    "grip_force_n": 10,
+    "release_force_n": 10,
+    "timeout_s": 8,
+    "settle_s": 1
+  }
+}
