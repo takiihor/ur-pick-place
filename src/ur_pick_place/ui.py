@@ -55,6 +55,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/poses/export':
             return self._reply(dict(version=1, poses=self.server.service.store.list()), download=True)
         assets = {'/': ('index.html', 'text/html; charset=utf-8'),
+                  '/waypoints': ('index.html', 'text/html; charset=utf-8'),
+                  '/waypoints/': ('index.html', 'text/html; charset=utf-8'),
+                  '/testing': ('index.html', 'text/html; charset=utf-8'),
+                  '/testing/': ('index.html', 'text/html; charset=utf-8'),
                   '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                   '/style.css': ('style.css', 'text/css; charset=utf-8')}
         if path not in assets:

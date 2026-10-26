@@ -7,6 +7,36 @@ let pollFailed = false, toastTimer;
 const degrees = value => value * 180 / Math.PI;
 const displayPose = pose => pose.slice(0, 3).map(v => v * 1000).concat(pose.slice(3).map(degrees));
 const fixed = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : '—';
+function showPage(page, navigate = false) {
+  page = page === 'testing' ? 'testing' : 'waypoints';
+  $('waypoint-page').hidden = page !== 'waypoints';
+  $('testing-page').hidden = page !== 'testing';
+  document.querySelectorAll('[data-page]').forEach(link => {
+    if (link.dataset.page === page) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  $('page-eyebrow').textContent = page === 'waypoints' ? 'PAGE 1 · TEACH' : 'PAGE 2 · TEST';
+  $('page-title').textContent = page === 'waypoints' ? 'Record waypoints' : 'Joint & force movement';
+  $('page-description').textContent = page === 'waypoints'
+    ? 'Position the TCP, then record, name and save your robot waypoints.'
+    : 'Choose your gripper and waypoints, test a joint move, or run a force-guided cycle.';
+  document.title = `${page === 'waypoints' ? 'Record waypoints' : 'Movement tests'} · Robot Bench`;
+  if (navigate) {
+    if (location.pathname !== `/${page}`) history.pushState({page}, '', `/${page}`);
+    $('page-title').focus({preventScroll:true});
+    window.scrollTo(0, 0);
+  }
+}
+function pageFromURL() { return location.pathname.replace(/\/$/, '') === '/testing' ? 'testing' : 'waypoints'; }
+document.querySelectorAll('[data-page]').forEach(link => {
+  link.onclick = event => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); showPage(link.dataset.page, true);
+  };
+});
+window.addEventListener('popstate', () => showPage(pageFromURL()));
+showPage(pageFromURL());
+if (location.pathname === '/') history.replaceState({page:'waypoints'}, '', '/waypoints');
 function showError(message) { $('error').textContent = message; $('error').classList.toggle('hidden', !message); }
 function toast(message) { $('toast').textContent = message; $('toast').classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.add('hidden'), 2600); }
 async function post(path, body = {}) {
@@ -36,6 +66,8 @@ function updateControls() {
   $('stop').disabled = !connected;
   $('save-settings').disabled = connected || busy;
   $('settings-form').querySelectorAll('input').forEach(input => { input.disabled = connected || busy; });
+  $('joint-test-pose').disabled = !!busy;
+  $('joint-test-move').disabled = !safe || !!busy || !$('joint-test-pose').value;
   updateSequenceControls(connected, busy, safe);
 }
 function loadTarget(pose) { displayPose(pose).forEach((v, i) => { $(`target-${axes[i]}`).value = v.toFixed(3); }); }
@@ -81,9 +113,13 @@ function render(data) {
     $('safety').textContent = `Safety · ${safety[feedback.safety_mode] || `mode ${feedback.safety_mode}`}`;
     $('feedback-age').textContent = `Feedback ${Math.round(feedback.age_s * 1000)} ms`;
     $('joints').replaceChildren(...feedback.joints_rad.map((v, i) => { const span = document.createElement('span'); span.textContent = `J${i + 1} ${fixed(degrees(v), 1)}°`; return span; }));
+    $('test-live-position').textContent = values.slice(0, 3).map(v => fixed(v)).join(' / ');
+    $('test-live-rotation').textContent = values.slice(3).map(v => fixed(v)).join(' / ');
+    $('test-live-joints').textContent = feedback.joints_rad.map(v => fixed(degrees(v), 1)).join(' / ');
     if (!$('target-x').value) loadTarget(feedback.tcp_pose_m_rad);
   } else {
     axes.forEach(axis => { $(`live-${axis}`).textContent = '—'; }); $('safety').textContent = 'Safety —'; $('feedback-age').textContent = 'No feedback'; $('joints').textContent = 'Connect to read joints';
+    ['test-live-position', 'test-live-rotation', 'test-live-joints'].forEach(id => { $(id).textContent = '—'; });
   }
   if (!initialized) {
     const settings = data.settings;
@@ -111,6 +147,8 @@ async function poll() {
 $('connect').onclick = () => command('/api/connect', {robot_ip: $('robot-ip').value});
 $('disconnect').onclick = () => command('/api/disconnect');
 $('stop').onclick = () => command('/api/stop');
+$('joint-test-pose').onchange = updateControls;
+$('joint-test-move').onclick = () => command('/api/move-saved', {id:$('joint-test-pose').value, mode:'joint'});
 $('copy-current').onclick = () => { if (state?.feedback) loadTarget(state.feedback.tcp_pose_m_rad); };
 document.querySelectorAll('[data-axis]').forEach(button => {
   button.onclick = () => {
@@ -224,6 +262,11 @@ function renderSequence(data) {
         if (match) select.value = match.id;
       }
     }
+    const jointSelect = $('joint-test-pose');
+    const jointSelected = jointSelect.value || $('sequence-home').value;
+    jointSelect.replaceChildren(new Option('Choose a saved pose…', ''));
+    for (const pose of data.poses) jointSelect.add(new Option(pose.name, pose.id));
+    if (data.poses.some(p => p.id === jointSelected)) jointSelect.value = jointSelected;
   }
   $('demo-poses').classList.toggle('hidden', !data.demo);
   if (!seq.preview) sequencePreviewId = null;

@@ -50,9 +50,27 @@ The same backend can be started with `ur-robot-ui` after package installation.
 It serves only on loopback. `--demo` never imports/connects RTDE and keeps its
 settings/poses separate from live recordings.
 
+### Two-page workflow
+
+Use the navigation at the top of Robot Bench:
+
+1. **Record waypoints** (`/waypoints`) shows live TCP/joint feedback, positioning
+   controls, pose recording, saved names and renaming. Position the robot here
+   and save each waypoint.
+2. **Joint & force tests** (`/testing`) lets you select a saved waypoint and
+   press **Test joint move**, or choose Home/Pick/Place plus **OnRobot RG2** or
+   **Arduino gripper** and preview/run a complete force-guided cycle. It also
+   shows live TCP/orientation/joint feedback while testing.
+
+The robot connection, saved waypoints, gripper settings and sequence status are
+shared between the pages. Navigation keeps unfinished form values and an
+active test intact. **Stop motion** remains available in the header on both
+pages. The root URL opens the waypoint page; either page can be opened directly
+or bookmarked. Switching pages does not create another RTDE connection.
+
 ### Test the full sequence with buttons
 
-The **Pick & place test** panel runs the complete cycle using the UI's existing
+On **Joint & force tests**, the **Pick & place test** panel runs the complete cycle using the UI's existing
 RTDE connection. Keep Robot Bench connected; no separate terminal or second
 robot-control session is needed.
 

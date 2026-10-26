@@ -35,9 +35,11 @@ class HttpTests(unittest.TestCase):
         return result
 
     def test_assets_and_preview_state_work_without_hardware(self):
-        status, html, _ = self.request('GET', '/')
-        self.assertEqual(status, 200)
-        self.assertIn(self.server.token.encode(), html)
+        for route in ('/', '/waypoints', '/testing'):
+            with self.subTest(route=route):
+                status, html, _ = self.request('GET', route)
+                self.assertEqual(status, 200)
+                self.assertIn(self.server.token.encode(), html)
         for path in ('/app.js', '/style.css'):
             self.assertEqual(self.request('GET', path)[0], 200)
         status, state, _ = self.request('GET', '/api/state')
