@@ -2,6 +2,8 @@
 import math
 import time
 
+from .geometry import rotate_base
+
 
 class DemoRobot:
     def __init__(self):
@@ -9,6 +11,8 @@ class DemoRobot:
         self.pose = [.4, -.1, .35, 0.0, math.pi, 0.0]
         self.joints = [0, -1.57, 1.57, -1.57, -1.57, 0]
         self._move = None
+        self._velocity = None
+        self._velocity_at = time.monotonic()
         self._token = -1
         self._duration = .6
         self._force_active = False
@@ -18,6 +22,13 @@ class DemoRobot:
 
     def _update(self):
         now = time.monotonic()
+        if self._velocity:
+            elapsed = now-self._velocity_at
+            for index in range(3):
+                self.pose[index] += self._velocity[index]*elapsed
+            for index in range(3):
+                self.pose = rotate_base(self.pose, index, math.degrees(self._velocity[index+3]*elapsed))
+        self._velocity_at = now
         if self._force_active:
             self.pose[2] = max(self._force_target, self.pose[2] - self._force_speed*30*(now-self._force_at))
         self._force_at = now
@@ -85,8 +96,19 @@ class DemoRobot:
     def stopJ(self, acceleration=1.0):
         self.stopL()
 
+    def speedL(self, velocity, acceleration, duration):
+        self._update()
+        self._velocity = list(velocity)
+        return True
+
+    def speedStop(self, acceleration=1.0):
+        self._update()
+        self._velocity = None
+        return True
+
     def stopScript(self):
         self.forceModeStop()
+        self.speedStop()
         self.stopL()
         return True
 

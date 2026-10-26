@@ -88,7 +88,8 @@ class Handler(BaseHTTPRequestHandler):
             service = self.server.service
             path = urlsplit(self.path).path
             commands = {'/api/connect': 'connect', '/api/disconnect': 'disconnect',
-                        '/api/jog': 'jog', '/api/move-tcp': 'move_tcp', '/api/move-saved': 'move_saved',
+                        '/api/jog': 'jog', '/api/jog/start': 'jog_start',
+                        '/api/move-tcp': 'move_tcp', '/api/move-saved': 'move_saved',
                         '/api/sequence/run': 'run_sequence'}
             if path in commands:
                 service.submit(commands[path], body)
@@ -97,10 +98,10 @@ class Handler(BaseHTTPRequestHandler):
                 service.stop()
                 return self._reply({'accepted': True}, 202)
             if path == '/api/heartbeat':
-                service.heartbeat()
+                service.heartbeat(body.get('jog_id'))
                 return self._reply({'ok': True})
             if path == '/api/poses':
-                return self._reply(service.record(body.get('name')), 201)
+                return self._reply(service.record(body.get('name'), ident=body.get('id')), 200 if body.get('id') else 201)
             if path == '/api/poses/rename':
                 return self._reply(service.store.rename(body.get('id'), body.get('name')))
             if path == '/api/settings':
