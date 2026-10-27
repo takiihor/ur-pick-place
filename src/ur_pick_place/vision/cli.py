@@ -299,7 +299,8 @@ def cmd_vision_pick(args, runtime):
                 'valid_for_s': config.preview.max_age_s, 'gripper': recipe.gripper.kind, 'warnings': warnings,
                 'calibration': calibration.summary(), **job.public(plan)})
         print(('Preview complete: observe/refine moves were performed. ' if args.observe_motion else
-               'Preview only: no motion. ') + 'Controller reachability is checked at execution. Review the poses, then run '
+               'Preview only: no motion. ')
+              + 'Controller reachability is checked at execution. Review the poses, then run '
               f'vision-pick --execute --preview {args.preview_out}. '
               'Envelope checks do not validate collision-free paths.')
         return 0

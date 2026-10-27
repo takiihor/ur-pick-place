@@ -27,6 +27,8 @@ GRASP_SCHEMA = 1
 #: A taught TCP more than this far from its marker is almost certainly a teaching mistake.
 MAX_MARKER_TCP_DISTANCE_M = 0.5
 BASE_DOWN = np.array([0.0, 0.0, -1.0])
+#: Unrefined observations must come from the taught observe joints (about 0.6 deg per joint).
+VIEWPOINT_TOLERANCE_RAD = 0.01
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class GraspModel:
     sha256: str = ''
     taught_refined: bool | None = None       # None for configured grasps
     taught_view: np.ndarray | None = None    # T_camera_marker of the taught observation
+    taught_joints: list | None = None        # observe joints of the taught observation
 
 
 def tool_tilt_deg(matrix):
@@ -112,6 +115,8 @@ def load_taught(path):
             raise ValueError('refined teaching requires its recorded camera viewpoint')
         if tcp_offset is None:
             raise ValueError('taught grasp is missing its TCP offset')
+        joints = taught.get('joints_rad')
+        joints = None if joints is None else vector(joints, 6, 'observation.joints_rad')
     except (KeyError, TypeError, ValueError) as exc:
         raise VisionError(f'Malformed taught grasp {path}: {exc}') from exc
     implied = reference_marker @ marker_tcp
@@ -121,7 +126,7 @@ def load_taught(path):
                       reference_tcp=reference_tcp, target=raw.get('target'), tcp_offset=tcp_offset,
                       calibration_sha256=raw.get('calibration_sha256'), source=str(path),
                       sha256=hashlib.sha256(data).hexdigest(), taught_refined=bool(taught.get('refined')),
-                      taught_view=view)
+                      taught_view=view, taught_joints=joints)
 
 
 def configured_grasp(raw, role):
@@ -163,6 +168,15 @@ def target_pose(model, observation, role, *, calibration_sha256, tcp_offset, tar
         reasons.append(f'grasp was taught {"with" if model.taught_refined else "without"} the refine view but this '
                        f'observation was {"refined" if observation.refined else "not refined"}; teach and run with '
                        'the same observe procedure')
+    # Without the refine view, hand-eye error cancels only from the taught viewpoint.
+    observed_joints = observation.robot.get('joints_rad') if isinstance(observation.robot, dict) else None
+    viewpoint_moved = (not observation.refined and model.taught_joints is not None and observed_joints is not None
+                       and max(abs(a - b) for a, b in zip(model.taught_joints, observed_joints))
+                       > VIEWPOINT_TOLERANCE_RAD)
+    procedure_matches = procedure_matches and not viewpoint_moved
+    if strict and viewpoint_moved:
+        reasons.append('observed from different joints than teaching; observe from the taught observe joints '
+                       'or re-teach')
     if model.role not in (None, observation.role):
         reasons.append(f'grasp was taught for the {model.role} target, observation is {observation.role}')
     if model.target is not None and not same_target(model.target, target):

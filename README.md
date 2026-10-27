@@ -249,12 +249,12 @@ to stop active force mode and the RTDE script without opening the jaws.
 
 ## Camera integration
 
-The vision application must transform its marker observation into a desired
+For the built-in wrist-camera path, see
+[Wrist-camera vision targeting](#wrist-camera-vision-targeting). An external vision
+application must instead transform its marker observation into a desired
 TCP grasp pose in the robot base frame. This requires camera/robot calibration,
 marker-to-grasp translation and orientation, and the correct configured TCP.
-Marker image pixels or a camera-frame position alone are insufficient. Marker
-detection, calibration and coordinate transformations belong to the calling
-vision application and are not implemented by this package.
+Marker image pixels or a camera-frame position alone are insufficient.
 
 Write the resulting six-number array to a JSON file, for example:
 
@@ -412,6 +412,22 @@ a physical UR10e, RealSense or URSim. Complete the hand-eye calibration's first
 `collect --dry-run`, then collect slowly with a hand on the e-stop. Validate the
 pick/place views and paths at reduced speed with the same attendance.
 
+### Setup chain
+
+1. **Print targets** with `charuco-generator`: tank-label ArUco markers (DICT_5X5_100,
+   30 mm, IDs 1-20) or the `front`/`rear` ChArUco boards. Measure the printed size;
+   mount them flat with their white quiet zone clear.
+2. **Hand-eye calibrate** the wrist camera with `ur10e-handeye` (eye-in-hand, its A4
+   DICT_6X6_250 board). Use the TCP you will pick with and keep the camera profile
+   (1280x720) unchanged afterwards; a verdict of `poor` is refused.
+3. **Teach** each target once: `observe` (saved), jog to the grasp, `teach-grasp`.
+4. **Run**: `vision-pick` preview, review, then `--execute --preview FILE`.
+
+Re-teach after recalibrating hand-eye, changing the TCP, the observe joints or the
+refine setting; each is detected and refused. A changed camera profile is refused
+through the intrinsics check. A moved camera mount is caught only once you
+recalibrate (the calibration hash changes), so recalibrate after any mount change.
+
 ### Install and configure
 
 Use Python 3.11-3.13 (3.12 recommended) and keep `charuco-generator`,
@@ -519,6 +535,45 @@ automatic jaw release or recovery move.
 `--write-pick-target target.json` exports a six-number base-frame TCP pose for the
 UI's Camera target input. This export does not move hardware.
 
+### Coordinates and taught-grasp math
+
+All poses are in the robot **base** frame, metres and UR rotation vectors (radians).
+`T_a_b` maps coordinates in frame `b` into frame `a`.
+
+| Frame | Origin and axes |
+| --- | --- |
+| Camera optical | Lens centre; X right, Y down, Z forward (RealSense colour stream) |
+| ArUco marker | Marker centre; X right, Y down, Z into the printed surface |
+| ChArUco board | Outer top-left pattern corner; X right, Y down, Z into the board |
+| Flange (tool0) | `getForwardKinematics(q, [0]*6)`, the controller's calibrated kinematics |
+| TCP | Active TCP; pick/place targets and taught grasps are TCP poses |
+
+```text
+T_base_camera = T_base_flange @ camera_in_flange             (hand-eye result)
+T_base_marker = T_base_camera @ T_camera_marker               (multi-frame mean)
+taught:  T_marker_tcp = inv(T_base_marker_taught) @ T_base_tcp_taught
+run:     T_base_tcp   = T_base_marker_now @ Trans(offset_mm) @ T_marker_tcp
+```
+
+Read-only sessions (RTDE receive) use `T_base_flange = getActualTCPPose() @
+inv(tcp_offset)` only when the declared active TCP equals the calibration's
+`camera_in_tcp.tcp_offset`, and cross-check it against nominal UR10e kinematics.
+Hand-eye error enters teaching and execution identically when the marker is seen
+the same way, so it largely cancels in `T_marker_tcp`; the refine view reproduces
+the taught marker-relative viewpoint, which makes the cancellation nearly exact.
+In simulation with a deliberate ~3 mm hand-eye error, grips landed within 0.2-0.8 mm
+from a fixed observe pose and within 0.1 mm with the refine view.
+
+Detection details: ChArUco corners from OpenCV 4.11 `detectBoard` are offset by about
++0.5 px, so one extra `cornerSubPix` pass (half-window 0.25 x corner spacing, 2-8 px)
+runs before pose estimation. ArUco corners use OpenCV subpixel refinement, then
+straight-line fits to the four outer edges: subpixel corners alone sit 0.15-0.4 px
+inside the true corners, inflating depth by ~0.5-1 %. Marker pose uses
+`SOLVEPNP_IPPE_SQUARE` with Levenberg-Marquardt refinement. Frames are rejected for
+low resolution (px/module), reprojection error, viewing angle, image-border contact
+and edge-fit residual; the averaged set is rejected for corner jitter or per-frame
+pose spread. Every rejection lists the failed gates with measured values.
+
 ### Offline validation
 
 ```sh
@@ -530,6 +585,20 @@ ArUco/ChArUco images exercise detection, multi-frame gates, calibrated flange/TC
 conventions, taught relationships, shifted objects, optional refine views, preview
 consumption, calibration rejection and simulated force-guided pick/place.
 
+### Safety notes and limitations
+
+- Not validated on hardware, URSim or a real RealSense: every result above comes
+  from rendered images and fake RTDE/grippers. Validate at reduced speed with the
+  e-stop at hand.
+- No collision checking: approach, refine and observe moves are checked against
+  the workspace box, controller safety limits and IK, not against the cell.
+- The force descent still runs along base -Z, so taught grasps must keep the tool
+  near vertical (`max_tool_tilt_deg`, default 20).
+- A single small marker gives weaker orientation than a board; near-frontal views
+  can show planar (IPPE) ambiguity. Use `motion_model: planar` for objects resting
+  on a flat support, keep the shift/rotation limits tight, or use a ChArUco board.
+- Accuracy depends on print scale, flatness, lighting and the hand-eye result; the
+  quality gates are operational thresholds, not measurement guarantees.
 
 SIGTERM follows the same interruption/cleanup path as Ctrl+C. Arm moves use
 asynchronous RTDE commands with a completion timeout, feedback checks and target

@@ -254,6 +254,18 @@ class GraspTests(unittest.TestCase):
         _, report = target_pose(model, observation(moved), self.role(), strict=False, **options)
         self.assertFalse(report['same_procedure_as_teaching'])
 
+    def test_unrefined_observation_must_use_taught_viewpoint(self):
+        moved = face_up(-0.395, -0.335, yaw_deg=22)
+        options = dict(calibration_sha256='abc', tcp_offset=TCP_OFFSET, target=self.target)
+        elsewhere = observation(moved)
+        elsewhere.robot = dict(elsewhere.robot, joints_rad=[q + 0.05 for q in OBSERVE_PICK])
+        with self.assertRaisesRegex(TargetValidationError, 'different joints than teaching'):
+            target_pose(self.model, elsewhere, self.role(), **options)
+        _, report = target_pose(self.model, elsewhere, self.role(), strict=False, **options)
+        self.assertFalse(report['same_procedure_as_teaching'])
+        _, report = target_pose(self.model, observation(moved), self.role(), **options)
+        self.assertTrue(report['same_procedure_as_teaching'])
+
     def test_teach_refuses_implausible_relationships(self):
         far_tcp = self.marker @ tf.translation([0.7, 0, 0]) @ MARKER_TCP
         with self.assertRaisesRegex(VisionError, 'from the marker'):

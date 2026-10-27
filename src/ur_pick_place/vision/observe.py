@@ -242,7 +242,8 @@ class Observer:
         def checked_frame(frame):
             require_stationary(before, self.pose_source.snapshot(), self.config.robot.stationary_joint_rad)
             return self._check(frame)
-        measurement = capture(measurer_for(target, self.config.quality), self.camera, self.config.quality, checked_frame)
+        quality = self.config.quality
+        measurement = capture(measurer_for(target, quality), self.camera, quality, checked_frame)
         after = self.pose_source.snapshot()
         require_stationary(before, after, self.config.robot.stationary_joint_rad)
         base_camera = before.base_flange @ self.calibration.camera_in_flange
