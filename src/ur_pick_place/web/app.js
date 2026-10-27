@@ -111,6 +111,8 @@ function render(data) {
     values.forEach((value, i) => { $(`live-${axes[i]}`).textContent = fixed(value); });
     const safety = {1: 'Normal', 2: 'Reduced', 3: 'Protective stop', 5: 'Safeguard stop', 7: 'Emergency stop'};
     $('safety').textContent = `Safety · ${safety[feedback.safety_mode] || `mode ${feedback.safety_mode}`}`;
+    $('safety').classList.toggle('ok', [1, 2].includes(feedback.safety_mode));
+    $('safety').classList.toggle('warn', ![1, 2].includes(feedback.safety_mode));
     $('feedback-age').textContent = `Feedback ${Math.round(feedback.age_s * 1000)} ms`;
     $('joints').replaceChildren(...feedback.joints_rad.map((v, i) => { const span = document.createElement('span'); span.textContent = `J${i + 1} ${fixed(degrees(v), 1)}°`; return span; }));
     $('test-live-position').textContent = values.slice(0, 3).map(v => fixed(v)).join(' / ');
@@ -118,7 +120,7 @@ function render(data) {
     $('test-live-joints').textContent = feedback.joints_rad.map(v => fixed(degrees(v), 1)).join(' / ');
     if (!$('target-x').value) loadTarget(feedback.tcp_pose_m_rad);
   } else {
-    axes.forEach(axis => { $(`live-${axis}`).textContent = '—'; }); $('safety').textContent = 'Safety —'; $('feedback-age').textContent = 'No feedback'; $('joints').textContent = 'Connect to read joints';
+    axes.forEach(axis => { $(`live-${axis}`).textContent = '—'; }); $('safety').textContent = 'Safety —'; $('safety').classList.remove('ok', 'warn'); $('feedback-age').textContent = 'No feedback'; $('joints').textContent = 'Connect to read joints';
     ['test-live-position', 'test-live-rotation', 'test-live-joints'].forEach(id => { $(id).textContent = '—'; });
   }
   if (!initialized) {
