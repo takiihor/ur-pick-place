@@ -38,6 +38,12 @@ class HandEyeCalibration:
     board_in_base: np.ndarray | None = None
     source: str = ''
     sha256: str = ''
+    simulated: bool = False
+    camera_serial: str | None = None
+
+    def require_hardware(self):
+        if self.simulated:
+            raise CalibrationError('Simulated calibration cannot be used with live hardware; calibrate the real cell')
 
     def summary(self):
         loo = self.metrics.get('leave_one_out') if isinstance(self.metrics.get('leave_one_out'), dict) else {}
@@ -92,13 +98,15 @@ def check_intrinsics(raw, name='intrinsics'):
             number(raw.get(key), f'{name}.{key}', positive=True)
         for key in ('ppx', 'ppy'):
             number(raw.get(key), f'{name}.{key}')
-        model = raw.get('model', 'none')
+        model = str(raw.get('model', 'none')).removeprefix('distortion.').lower()
         coeffs = [number(v, f'{name}.coeffs') for v in raw.get('coeffs', [])]
     except ValueError as exc:
         raise CalibrationError(str(exc)) from exc
     if model in ('brown_conrady', 'opencv'):
-        if len(coeffs) != 5:
-            raise CalibrationError(f'{name} model {model} requires five coefficients (k1, k2, p1, p2, k3)')
+        allowed = (0, 5) if model == 'brown_conrady' else (0, 4, 5, 8, 12, 14)
+        if len(coeffs) not in allowed:
+            raise CalibrationError(f'{name} model {model} requires five coefficients for Brown-Conrady; '
+                                   'OpenCV also accepts 4, 8, 12 or 14')
     elif model in ('none', 'inverse_brown_conrady', 'modified_brown_conrady'):
         if any(coeffs):
             raise CalibrationError(f'{name} model {model!r} with nonzero coefficients is not supported; '
@@ -107,7 +115,7 @@ def check_intrinsics(raw, name='intrinsics'):
         raise CalibrationError(f'{name} has unsupported distortion model {model!r}')
     return {'width': width, 'height': height, 'fx': float(raw['fx']), 'fy': float(raw['fy']),
             'ppx': float(raw['ppx']), 'ppy': float(raw['ppy']),
-            'model': 'brown_conrady' if any(coeffs) else 'none',
+            'model': ('opencv' if len(coeffs) != 5 else 'brown_conrady') if any(coeffs) else 'none',
             'coeffs': coeffs if any(coeffs) else [0.0] * 5}
 
 
@@ -137,9 +145,13 @@ def parse_handeye(raw, *, source='', sha256=''):
                 'camera_in_tcp.matrix and inv(tcp_offset) @ camera_in_flange.matrix')
     board = _transform(raw['board_in_base'], 'board_in_base') if isinstance(raw.get('board_in_base'), dict) else None
     metrics = raw.get('metrics') if isinstance(raw.get('metrics'), dict) else {}
+    camera = raw.get('camera') if isinstance(raw.get('camera'), dict) else {}
+    device = camera.get('device') if isinstance(camera.get('device'), dict) else {}
+    simulated = bool(raw.get('simulation_truth') or camera.get('simulated'))
     return HandEyeCalibration(camera_in_flange=flange, camera_in_tcp=in_tcp, tcp_offset=tcp_offset,
                               intrinsics=check_intrinsics(raw.get('intrinsics')), verdict=verdict,
-                              metrics=metrics, board_in_base=board, source=source, sha256=sha256)
+                              metrics=metrics, board_in_base=board, source=source, sha256=sha256,
+                              simulated=simulated, camera_serial=device.get('serial_number'))
 
 
 def load_handeye(path):

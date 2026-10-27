@@ -368,10 +368,17 @@ def capture(measurer, camera, quality, intrinsics_check):
     ``intrinsics_check(frame)`` returns the intrinsics to use, or raises.
     """
     accepted, rejected, attempts, size, intrinsics = [], {}, 0, None, None
+    seen_frames = set()
     while len(accepted) < quality.frames and attempts < quality.max_attempt_frames:
         frame = camera.read()
         attempts += 1
         intrinsics = intrinsics_check(frame)
+        number = getattr(frame, 'frame_number', 0)
+        if number:
+            if number in seen_frames:
+                rejected.setdefault('repeated_frame', {'count': 0, 'example': 'repeated camera frame'})['count'] += 1
+                continue
+            seen_frames.add(number)
         gray = frame.bgr if frame.bgr.ndim == 2 else cv2.cvtColor(frame.bgr, cv2.COLOR_BGR2GRAY)
         if size is not None and gray.shape[::-1] != size:
             raise VisionError('Camera image size changed during an observation')

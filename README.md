@@ -529,3 +529,19 @@ Install the vision extra and sibling packages to include all camera tests. Rende
 ArUco/ChArUco images exercise detection, multi-frame gates, calibrated flange/TCP
 conventions, taught relationships, shifted objects, optional refine views, preview
 consumption, calibration rejection and simulated force-guided pick/place.
+
+
+SIGTERM follows the same interruption/cleanup path as Ctrl+C. Arm moves use
+asynchronous RTDE commands with a completion timeout, feedback checks and target
+arrival checks; the UI borrows the same implementation. Both pick and placement
+force searches use the gripper safety guard. Contact detected beyond the configured
+descent budget is refused.
+
+Vision execution locks a preview before opening RTDE control; concurrent use of
+the same preview is refused. A leftover `.lock` after a process crash requires
+review before removal. Simulated calibration files and demo observe poses are
+refused by motion workflows. A recorded camera serial is selected and checked.
+Observation frames are checked for fresh robot feedback, repeated frame numbers,
+robot movement and TCP changes. Saved observations require finite rigid transforms
+and a consistent camera-to-target chain. `teach-grasp --from-robot` also requires
+a declared active TCP matching the observation's TCP.

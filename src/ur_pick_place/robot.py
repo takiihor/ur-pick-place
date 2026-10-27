@@ -23,6 +23,7 @@ class RTDERobot:
         self.config = recipe
         self.control = self.receive = None
         self.force_active = False
+        self.stop_failed = False
         self._last_timestamp = None
         self._last_fresh_at = time.monotonic()
         self.validator = PickPlaceController(recipe)
@@ -63,27 +64,65 @@ class RTDERobot:
         for pose in [home_pose, *poses]:
             self._require_success(self.control.isPoseWithinSafetyLimits(pose), f'Pose safety check {pose}')
 
-    def move_joints(self, joints):
+    def pause(self, seconds):
+        time.sleep(seconds)
+
+    def _move(self, mode, target, speed, acceleration):
         if self.force_active:
-            raise SequenceError('Joint move blocked while force mode is active')
+            raise SequenceError('Position movement blocked while force mode is active')
         self._read()
+        target = vector(target, 6, 'Movement target')
+        if mode == 'joint':
+            self._require_success(self.control.isJointsWithinSafetyLimits(target), 'Joint safety check')
+            tcp = self.validator.validate_pose(self.control.getForwardKinematics(target))
+            self._require_success(self.control.isPoseWithinSafetyLimits(tcp), 'Joint target TCP safety check')
+        else:
+            self.validator.validate_pose(target)
+            self._require_success(self.control.isPoseWithinSafetyLimits(target), 'TCP safety check')
+            self._require_success(self.control.getInverseKinematicsHasSolution(
+                target, self.receive.getActualQ()), 'TCP inverse kinematics check')
+        before = self.control.getAsyncOperationProgress()
+        started = False
+        deadline = time.monotonic() + 120
+        try:
+            method = self.control.moveJ if mode == 'joint' else self.control.moveL
+            self._require_success(method(target, speed, acceleration, True), 'Movement')
+            while True:
+                self._read()
+                progress = self.control.getAsyncOperationProgress()
+                if progress >= 0:
+                    started = True
+                elif started or progress != before:
+                    break
+                if time.monotonic() > deadline:
+                    raise SequenceError('Movement timed out')
+                self.pause(0.01)
+            self.pause(self.config.motion.settle_s)
+            actual, _ = self._read()
+            if mode == 'joint':
+                joints = vector(self.receive.getActualQ(), 6, 'Actual joints')
+                if max(abs(a - b) for a, b in zip(joints, target)) > 0.0035:
+                    raise SequenceError('Joint move completed away from the commanded target')
+            elif (math.dist(actual[:3], target[:3]) > 0.001
+                  or rotation_distance(actual[3:], target[3:]) > 0.005):
+                raise SequenceError('Linear move completed away from the commanded target')
+        except BaseException:
+            try:
+                stop = self.control.stopJ if mode == 'joint' else self.control.stopL
+                self._require_success(stop(1.0), 'Movement stop')
+            except Exception as exc:
+                self.stop_failed = True
+                raise SequenceError(f'Cannot stop movement: {exc}') from exc
+            raise
+
+    def move_joints(self, joints):
         c = self.config.motion
-        self._require_success(self.control.moveJ(joints, c.joint_speed_rad_s,
-                                                 c.joint_accel_rad_s2), 'Joint move')
-        time.sleep(c.settle_s)
-        self._read()
+        self._move('joint', joints, c.joint_speed_rad_s, c.joint_accel_rad_s2)
 
     def move_linear(self, pose, grasp_speed=False):
-        if self.force_active:
-            raise SequenceError('Linear move blocked while force mode is active')
-        self._read()
-        self.validator.validate_pose(pose)
-        self._require_success(self.control.isPoseWithinSafetyLimits(pose), 'Grasp/linear pose safety check')
         c = self.config.motion
-        speed = c.grasp_speed_mm_s if grasp_speed else c.transit_speed_mm_s
-        self._require_success(self.control.moveL(pose, speed / 1000, c.tcp_accel_m_s2), 'Linear move')
-        time.sleep(c.settle_s)
-        self._read()
+        self._move('tcp', pose, (c.grasp_speed_mm_s if grasp_speed else c.transit_speed_mm_s) / 1000,
+                   c.tcp_accel_m_s2)
 
     def _baseline(self):
         self._require_success(self.control.zeroFtSensor(), 'Force sensor zero')
@@ -129,6 +168,8 @@ class RTDERobot:
                     raise SequenceError('Orientation drift exceeded probe limit')
                 if pose[2] > start_pose[2] + 0.005:
                     raise SequenceError('Probe moved upward unexpectedly')
+                if pose[2] < start_pose[2] - settings.max_descent_mm / 1000 - 1e-6:
+                    raise SequenceError('Probe travel budget exceeded; contact cannot authorize release or grip')
                 if endpoint_z is not None and pose[2] <= endpoint_z:
                     result = ProbeResult(pose, 'endpoint')
                     break

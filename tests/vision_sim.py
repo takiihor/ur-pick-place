@@ -103,6 +103,7 @@ class FakeRTDE:
         self.force_active = False
         self.contact = False
         self._moves = 0
+        self.progress = -1
 
     # Receive interface
     def isConnected(self):
@@ -152,7 +153,11 @@ class FakeRTDE:
     def getInverseKinematicsHasSolution(self, pose, qnear=None, *args):
         return bool(self.reachable(pose))
 
+    def getAsyncOperationProgress(self):
+        return self.progress
+
     def moveJ(self, q, speed, acceleration, asynchronous=False):
+        self.progress = -2 if self.progress == -1 else -1
         self.events.append(('moveJ', list(q)))
         self.q = list(q)
         self.flange = self._flange_for(q) if self._flange_for(q) is not None else true_flange(q)
@@ -160,6 +165,7 @@ class FakeRTDE:
         return True
 
     def moveL(self, pose, speed, acceleration, asynchronous=False):
+        self.progress = -2 if self.progress == -1 else -1
         self.events.append(('moveL', list(pose)))
         self.flange = pose_to_matrix(pose) @ invert(pose_to_matrix(self.tcp))
         self._moves += 1
@@ -191,6 +197,14 @@ class FakeRTDE:
     def forceModeStop(self):
         self.force_active = False
         self.events.append(('forceModeStop',))
+        return True
+
+    def stopJ(self, acceleration):
+        self.events.append(('stopJ',))
+        return True
+
+    def stopL(self, acceleration):
+        self.events.append(('stopL',))
         return True
 
     def stopScript(self):

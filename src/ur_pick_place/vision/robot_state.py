@@ -52,6 +52,18 @@ def _check_safety(receive):
         raise VisionError('Robot is outside normal/reduced safety mode')
 
 
+def _check_feedback(source):
+    _check_safety(source.receive)
+    stamp = source.receive.getTimestamp()
+    now = time.monotonic()
+    if not math.isfinite(stamp):
+        raise VisionError('Invalid RTDE feedback timestamp')
+    if stamp != getattr(source, '_last_stamp', None):
+        source._last_stamp, source._last_fresh = stamp, now
+    elif now - source._last_fresh > 0.25:
+        raise VisionError('RTDE feedback stopped updating during observation')
+
+
 class ControlPoseSource:
     """Flange from the controller's calibrated kinematics (requires RTDE control)."""
     read_only = False
@@ -60,7 +72,9 @@ class ControlPoseSource:
         self.control, self.receive = control, receive
 
     def snapshot(self):
-        _check_safety(self.receive)
+        _check_feedback(self)
+        if not self.control.isConnected():
+            raise VisionError('Robot RTDE control interface disconnected')
         q = vector(self.receive.getActualQ(), 6, 'Actual joints')
         flange = pose_to_matrix(self.control.getForwardKinematics(q, [0.0] * 6))
         return RobotSnapshot(q=q, base_flange=flange,
@@ -73,22 +87,23 @@ class ReceivePoseSource:
     """Flange from actual TCP feedback; refuses unless the declared TCP is the calibrated one."""
     read_only = True
 
-    def __init__(self, receive, calibration, declared_tcp, checks):
+    def __init__(self, receive, calibration, declared_tcp, checks, *, expected_tcp=None):
+        expected_tcp = calibration.tcp_offset if expected_tcp is None else expected_tcp
         if declared_tcp is None:
             raise CalibrationError(
                 'Read-only observation needs the active TCP offset: set robot.active_tcp_offset or pass '
                 '--active-tcp (RTDE receive cannot report it)')
         declared_tcp = vector(declared_tcp, 6, 'Declared active TCP offset')
-        if not same_tcp(declared_tcp, calibration.tcp_offset):
+        if not same_tcp(declared_tcp, expected_tcp):
             raise CalibrationError(
                 f'Active TCP {declared_tcp} differs from the TCP recorded with the hand-eye calibration '
-                f'{calibration.tcp_offset}; read-only flange recovery refused. Activate the calibrated TCP '
+                f'{expected_tcp}; read-only flange recovery refused. Activate the calibrated TCP '
                 'or observe with an RTDE control session (--execute)')
         self.receive, self.calibration, self.checks = receive, calibration, checks
-        self.tcp_offset = list(calibration.tcp_offset)
+        self.tcp_offset = list(expected_tcp)
 
     def snapshot(self):
-        _check_safety(self.receive)
+        _check_feedback(self)
         q = vector(self.receive.getActualQ(), 6, 'Actual joints')
         tcp_pose = vector(self.receive.getActualTCPPose(), 6, 'Actual TCP pose')
         tcp = pose_to_matrix(tcp_pose)
@@ -112,3 +127,6 @@ def require_stationary(before, after, tolerance_rad):
     if moved > tolerance_rad:
         raise VisionError(f'Robot moved {moved:.5f} rad during image capture (limit {tolerance_rad:g} rad); '
                           'observation discarded')
+    a, b = getattr(before, 'tcp_offset', None), getattr(after, 'tcp_offset', None)
+    if a is not None and b is not None and not same_tcp(a, b):
+        raise VisionError('Active TCP changed during image capture; observation discarded')

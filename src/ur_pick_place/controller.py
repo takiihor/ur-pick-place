@@ -114,7 +114,8 @@ class PickPlaceController:
             logger.info('Approaching placement and probing for contact')
             self.on_step('place', 'Approach placement and force-descend')
             self._linear(plan['place_approach'])
-            placed = self.robot.probe(c.place_probe)
+            with self.gripper.probe_guard() as guard:
+                placed = self.robot.probe(c.place_probe, guard=guard)
             if placed.reason != 'contact':
                 raise SequenceError('Placement requires contact; release blocked')
             placed_pose = self.validate_pose(placed.pose)

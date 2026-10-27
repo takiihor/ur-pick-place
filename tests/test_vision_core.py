@@ -366,5 +366,70 @@ class PreviewTests(unittest.TestCase):
             self.job.compose({'pick': observation(low, sha=self.calibration.sha256)}, TCP_OFFSET)
 
 
+class ReviewRegressionTests(unittest.TestCase):
+    def test_simulated_calibration_cannot_authorize_hardware(self):
+        raw = calibration_dict()
+        raw['camera'] = {'simulated': True}
+        with self.assertRaisesRegex(CalibrationError, 'Simulated'):
+            parse_handeye(raw).require_hardware()
+
+    def test_saved_observation_requires_rigid_consistent_transforms(self):
+        observed = observation(np.eye(4))
+        observed.base_target = observed.base_camera @ observed.camera_target
+        raw = observed.to_json()
+        self.assertEqual(Observation.from_json(raw).role, 'pick')
+        for key in ('target_in_base', 'target_in_camera', 'camera_in_base', 'flange_in_base'):
+            bad = copy.deepcopy(raw)
+            bad[key]['matrix'][3][0] = 0.1
+            with self.subTest(key=key), self.assertRaisesRegex(VisionError, 'bottom row'):
+                Observation.from_json(bad)
+        bad = copy.deepcopy(raw)
+        bad['target_in_base']['matrix'][0][3] += 0.01
+        with self.assertRaisesRegex(VisionError, 'disagrees'):
+            Observation.from_json(bad)
+        raw['refined'] = 'false'
+        with self.assertRaisesRegex(VisionError, 'flag'):
+            Observation.from_json(raw)
+
+    def test_demo_observe_pose_cannot_authorize_preview_motion(self):
+        from vision_sim import ROOT, vision_config
+        from ur_pick_place.poses import PoseStore
+        from ur_pick_place.vision.cli import _load, _parser
+        with tempfile.TemporaryDirectory() as directory:
+            path = vision_config(directory)
+            poses = Path(directory) / 'poses.json'
+            PoseStore(poses).save('demo view', [0]*6, [0]*6, robot_ip='demo', demo=True)
+            args = _parser().parse_args(['vision-pick', '--config', str(ROOT / 'examples/rg2.json'),
+                        '--vision', str(path), '--pose-store', str(poses), '--observe-pose', 'demo view',
+                        '--observe-motion'])
+            with self.assertRaisesRegex(ValueError, 'Demo poses'):
+                _load(args, None)
+
+    def test_preview_lock_serializes_concurrent_use(self):
+        from ur_pick_place.vision.cli import _preview_lock
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'preview.json'
+            with _preview_lock(path):
+                with self.assertRaisesRegex(ValueError, 'already in use'):
+                    with _preview_lock(path):
+                        self.fail('second process acquired preview')
+            self.assertFalse(Path(str(path) + '.lock').exists())
+
+    def test_camera_identity_is_checked(self):
+        from ur_pick_place.vision.observe import check_camera_identity
+        raw = calibration_dict()
+        raw['camera'] = {'device': {'serial_number': 'expected'}}
+        calibration = parse_handeye(raw)
+        check_camera_identity(SimpleNamespace(serial='expected'), calibration)
+        with self.assertRaisesRegex(VisionError, 'serial differs'):
+            check_camera_identity(SimpleNamespace(serial='other'), calibration)
+
+    def test_tcp_change_during_capture_is_refused(self):
+        before = SimpleNamespace(q=[0]*6, tcp_offset=[0]*6)
+        after = SimpleNamespace(q=[0]*6, tcp_offset=[0, 0, 0.1, 0, 0, 0])
+        with self.assertRaisesRegex(VisionError, 'TCP changed'):
+            require_stationary(before, after, 0.001)
+
+
 if __name__ == '__main__':
     unittest.main()

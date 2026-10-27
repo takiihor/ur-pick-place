@@ -84,6 +84,9 @@ class DemoRobot:
     def isJointsWithinSafetyLimits(self, joints):
         return True
 
+    def getInverseKinematicsHasSolution(self, pose, qnear=None):
+        return True
+
     def getForwardKinematics(self, joints):
         return list(self.pose)
 
@@ -92,9 +95,10 @@ class DemoRobot:
         if self._move:
             self._move = None
             self._token = -2 if self._token == -1 else -1
+        return True
 
     def stopJ(self, acceleration=1.0):
-        self.stopL()
+        return self.stopL()
 
     def speedL(self, velocity, acceleration, duration):
         self._update()

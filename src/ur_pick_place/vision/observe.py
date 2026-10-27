@@ -15,7 +15,7 @@ from .errors import VisionError
 from .handeye import check_intrinsics
 from .robot_state import require_stationary
 from .targets import target_from_config
-from .transforms import describe, invert, matrix_to_pose, pose_to_matrix, rotation_angle
+from .transforms import check_transform, describe, invert, matrix_to_pose, pose_to_matrix, rotation_angle
 
 OBSERVATION_SCHEMA = 1
 
@@ -53,12 +53,23 @@ class Observation:
         if raw.get('schema_version') != OBSERVATION_SCHEMA:
             raise VisionError(f'Unsupported observation schema_version {raw.get("schema_version")!r}')
         try:
-            matrices = {key: np.asarray(raw[key]['matrix'], float)
+            matrices = {key: check_transform(raw[key]['matrix'], key)
                         for key in ('target_in_base', 'target_in_camera', 'camera_in_base', 'flange_in_base')}
+            if raw['role'] not in ('pick', 'place') or type(raw['refined']) is not bool:
+                raise ValueError('invalid role or refined flag')
+            if not math.isfinite(float(raw['timestamp'])):
+                raise ValueError('timestamp must be finite')
+            if not isinstance(raw['target'], dict) or not isinstance(raw['quality'], dict):
+                raise ValueError('target and quality must be objects')
+            vector(raw['robot']['joints_rad'], 6, 'observation joints')
+            vector(raw['robot']['tcp_offset'], 6, 'observation TCP offset')
+            implied = matrices['camera_in_base'] @ matrices['target_in_camera']
+            if not np.allclose(implied, matrices['target_in_base'], atol=1e-6, rtol=0):
+                raise ValueError('target_in_base disagrees with camera_in_base @ target_in_camera')
             return cls(role=raw['role'], target=raw['target'], camera_target=matrices['target_in_camera'],
                        base_flange=matrices['flange_in_base'], base_camera=matrices['camera_in_base'],
                        base_target=matrices['target_in_base'], robot=raw['robot'], quality=raw['quality'],
-                       refined=bool(raw['refined']), calibration_sha256=raw['calibration_sha256'],
+                       refined=raw['refined'], calibration_sha256=raw['calibration_sha256'],
                        timestamp=float(raw['timestamp']), notes=list(raw.get('notes', [])),
                        first_pass=raw.get('first_pass'))
         except (KeyError, TypeError, ValueError) as exc:
@@ -121,6 +132,12 @@ def open_camera(camera_config):
         camera.close()
         raise
     return camera
+
+
+def check_camera_identity(camera, calibration):
+    calibration.require_hardware()
+    if calibration.camera_serial and getattr(camera, 'serial', None) != calibration.camera_serial:
+        raise VisionError('Camera serial differs from the hand-eye calibration; use the calibrated camera')
 
 
 class RobotMover:
@@ -222,7 +239,10 @@ class Observer:
         if self.config.robot.settle_s:
             time.sleep(self.config.robot.settle_s)
         before = self.pose_source.snapshot()
-        measurement = capture(measurer_for(target, self.config.quality), self.camera, self.config.quality, self._check)
+        def checked_frame(frame):
+            require_stationary(before, self.pose_source.snapshot(), self.config.robot.stationary_joint_rad)
+            return self._check(frame)
+        measurement = capture(measurer_for(target, self.config.quality), self.camera, self.config.quality, checked_frame)
         after = self.pose_source.snapshot()
         require_stationary(before, after, self.config.robot.stationary_joint_rad)
         base_camera = before.base_flange @ self.calibration.camera_in_flange

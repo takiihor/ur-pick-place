@@ -144,6 +144,7 @@ class VisionJob:
         if consume is not None:
             consume(preview)
         robot, gripper = controller.robot, controller.gripper
+        gripper.require_ready()
         observations, tcp_offset = self.observe_all(camera, robot, log)
         plan = self.compose(observations, tcp_offset)
         self.check_against_preview(preview, plan)

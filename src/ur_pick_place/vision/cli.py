@@ -13,6 +13,8 @@ vision-pick   Preview (default): read-only observation, validated pick/place tar
 import argparse
 import json
 import logging
+from contextlib import contextmanager
+import os
 from pathlib import Path
 
 from ..config import Recipe, vector
@@ -96,18 +98,35 @@ def _load(args, runtime):
     from .config import VisionConfig
     from .handeye import check_metrics, load_handeye
     from .planner import file_sha256
+    vision_digest = file_sha256(args.vision)
     config = VisionConfig.load(args.vision)
+    if file_sha256(args.vision) != vision_digest:
+        raise ValueError('Vision configuration changed while it was being loaded; retry')
     calibration = load_handeye(config.path(config.handeye_calibration))
+    required_roles = {'pick'} | ({'place'} if config.place is not None else set())
+    supplied_roles = ({item.partition('=')[0] for item in args.observation}
+                      if args.command == 'vision-pick' else set())
+    if (args.command == 'observe' or getattr(args, 'execute', False)
+            or getattr(args, 'observe_motion', False) or getattr(args, 'from_robot', False)
+            or args.command == 'vision-pick' and not required_roles <= supplied_roles):
+        calibration.require_hardware()
+    if calibration.camera_serial:
+        if config.camera.serial and config.camera.serial != calibration.camera_serial:
+            raise ValueError('Configured camera serial differs from the hand-eye calibration')
+        config.camera.serial = calibration.camera_serial
     check_metrics(calibration, config.max_handeye_loo_mm, config.max_handeye_reprojection_px,
                   config.max_handeye_translation_sigma_mm)
-    recipe = Recipe.load(args.config) if getattr(args, 'config', None) else None
-    inputs = {'vision_config': file_sha256(args.vision)}
+    recipe_digest = file_sha256(args.config) if getattr(args, 'config', None) else None
+    recipe = Recipe.load(args.config) if recipe_digest is not None else None
+    inputs = {'vision_config': vision_digest}
     if recipe is not None:
-        inputs['recipe'] = file_sha256(args.config)
+        if file_sha256(args.config) != recipe_digest:
+            raise ValueError('Recipe changed while it was being loaded; retry')
+        inputs['recipe'] = recipe_digest
     if getattr(args, 'observe_pose', None):
         from ..poses import PoseStore
         saved = PoseStore(args.pose_store).by_name(args.observe_pose)
-        if getattr(args, 'execute', False) and saved.get('demo'):
+        if (getattr(args, 'execute', False) or getattr(args, 'observe_motion', False)) and saved.get('demo'):
             raise ValueError('Demo poses cannot be used for hardware execution')
         role = config.role(getattr(args, 'role', 'pick'))
         role.observe_joints = vector(saved['joints_rad'], 6, 'observe joints')
@@ -132,21 +151,23 @@ def _close(resource):
 
 
 def _read_only_observer(args, config, calibration, recipe, runtime, camera_holder):
-    from .observe import Observer
+    from .observe import Observer, check_camera_identity
     from .robot_state import ReceivePoseSource
     receive = runtime.receive(recipe.robot_ip)
     camera_holder.append(receive)
     source = ReceivePoseSource(receive, calibration, _declared_tcp(args, config), config.robot)
     camera = runtime.camera(config.camera)
     camera_holder.append(camera)
+    check_camera_identity(camera, calibration)
     return Observer(config, calibration, camera, source, on_step=log.info), source
 
 
 def _moving_observer(config, calibration, recipe, runtime, held, views=None):
-    from .observe import Observer, RobotMover
+    from .observe import Observer, RobotMover, check_camera_identity
     from .robot_state import ControlPoseSource
     camera = runtime.camera(config.camera)
     held.append(camera)
+    check_camera_identity(camera, calibration)
     robot = runtime.robot(recipe)
     held.append(robot)
     source = ControlPoseSource(robot.control, robot.receive)
@@ -206,11 +227,12 @@ def cmd_teach(args, runtime):
     else:
         if recipe is None:
             raise ValueError('--from-robot needs --config for the robot address')
+        from .robot_state import ReceivePoseSource
         receive = runtime.receive(recipe.robot_ip)
         try:
-            if receive.getSafetyMode() not in (1, 2):
-                raise ValueError('Robot is outside normal/reduced safety mode')
-            tcp, source = vector(receive.getActualTCPPose(), 6, 'Actual TCP pose'), 'robot (RTDE receive)'
+            source = ReceivePoseSource(receive, calibration, _declared_tcp(args, config), config.robot,
+                                       expected_tcp=observation.robot.get('tcp_offset'))
+            tcp, source = source.snapshot().tcp_pose, 'robot (RTDE receive; TCP checked)'
         finally:
             _close(receive)
     record = teach(observation, tcp, role=args.role, calibration=calibration, limits=role.limits)
@@ -288,19 +310,44 @@ def cmd_vision_pick(args, runtime):
     preview = json.loads(args.preview.read_text())
     job.check_preview(preview)
     recipe.gripper.require_live_ready()
-    camera = runtime.camera(config.camera)
-    try:
-        with runtime.connect(recipe) as controller:
-            # One preview authorizes one execution attempt.
-            plan = job.execute(preview, controller, camera, on_step=log.info,
-                               consume=lambda used: atomic_json(args.preview, used))
-    finally:
-        _close(camera)
+    from .observe import check_camera_identity
+    # Serialize use of this preview before either process can open RTDE control.
+    with _preview_lock(args.preview):
+        preview = json.loads(args.preview.read_text())
+        job.check_preview(preview)
+        camera = runtime.camera(config.camera)
+        try:
+            check_camera_identity(camera, calibration)
+            with runtime.connect(recipe) as controller:
+                plan = job.execute(preview, controller, camera, on_step=log.info,
+                                   consume=lambda used: atomic_json(args.preview, used))
+        finally:
+            _close(camera)
     _print({'mode': 'execute', 'completed_cycles': 1, **job.public(plan)})
     return 0
 
 
+@contextmanager
+def _preview_lock(path):
+    lock = Path(str(path) + '.lock')
+    try:
+        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise ValueError(f'Preview is already in use ({lock}); review the cell before removing a stale lock') from exc
+    try:
+        os.close(descriptor)
+        yield
+    finally:
+        lock.unlink()
+
+
 def main(argv=None, runtime=Runtime):
+    from ..shutdown import stop_on_termination
+    with stop_on_termination():
+        return _main(argv, runtime)
+
+
+def _main(argv=None, runtime=Runtime):
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     handlers = {'observe': cmd_observe, 'teach-grasp': cmd_teach, 'vision-pick': cmd_vision_pick}

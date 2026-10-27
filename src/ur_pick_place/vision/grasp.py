@@ -65,6 +65,8 @@ def teach(observation, tcp_pose, *, role, calibration, limits, tcp_offset=None):
         raise VisionError(f'Taught TCP Z axis is {tilt:.1f} deg from base -Z (limit {limits.max_tool_tilt_deg:g}); '
                           'force-guided descent runs along base -Z')
     tcp_offset = tcp_offset if tcp_offset is not None else observation.robot.get('tcp_offset')
+    if tcp_offset is None:
+        raise VisionError('Teaching requires the active TCP offset; observe again with a declared TCP')
     return {'schema_version': GRASP_SCHEMA, 'type': 'taught_marker_grasp', 'role': role,
             'target': observation.target, 'marker_to_tcp': describe(marker_tcp),
             'taught_marker_in_base': describe(observation.base_target), 'taught_tcp_in_base': matrix_to_pose(tcp),
@@ -106,6 +108,10 @@ def load_taught(path):
         taught = raw.get('observation') or {}
         view = taught.get('target_in_camera')
         view = None if view is None else check_transform(view['matrix'], 'observation.target_in_camera')
+        if type(taught.get('refined')) is not bool or (taught['refined'] and view is None):
+            raise ValueError('refined teaching requires its recorded camera viewpoint')
+        if tcp_offset is None:
+            raise ValueError('taught grasp is missing its TCP offset')
     except (KeyError, TypeError, ValueError) as exc:
         raise VisionError(f'Malformed taught grasp {path}: {exc}') from exc
     implied = reference_marker @ marker_tcp

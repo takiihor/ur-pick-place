@@ -174,7 +174,7 @@ class VisionPipelineTests(unittest.TestCase):
         # Hand-eye error (~3 mm absolute) mostly cancels; it cancels almost fully with the refine view.
         self.assertLess(error_mm, 0.25 if self.refine else 1.0, f'grip error {error_mm:.3f} mm')
         self.assertLess(error_deg, 0.4)
-        self.assertEqual(self.runtime.gripper.events, ['ready', 'open', 'grip', 'open'])
+        self.assertEqual(self.runtime.gripper.events, ['ready', 'ready', 'open', 'grip', 'open'])
         # Placement followed the place marker: release happened at contact above it.
         place_truth = self.world.place @ PLACE_TCP
         release = [e for e in self.world.rtde.events if e[0] == 'forceModeStop']

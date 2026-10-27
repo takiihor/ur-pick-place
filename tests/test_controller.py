@@ -173,3 +173,23 @@ class ControllerTests(unittest.TestCase):
                 path.write_text(json.dumps(bad))
                 with self.assertRaises(ValueError):
                     Recipe.load(path)
+
+
+class PlacementGuardTests(unittest.TestCase):
+    def test_place_guard_failure_blocks_release(self):
+        events = []
+        robot = FakeRobot(events)
+        gripper = FakeGripper(events)
+        guards = []
+        @contextmanager
+        def guarded():
+            guards.append(True)
+            def check():
+                if len(guards) == 2:
+                    raise SequenceError('placement safety switch')
+            yield check
+        gripper.probe_guard = guarded
+        with self.assertRaisesRegex(SequenceError, 'placement safety switch'):
+            PickPlaceController(recipe(), robot, gripper).run()
+        self.assertEqual(gripper.opens, 1)  # initial opening only; held object stays held
+        self.assertEqual(len(guards), 2)
