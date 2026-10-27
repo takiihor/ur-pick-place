@@ -4,13 +4,15 @@ project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$project_dir"
 usage() {
   cat <<'HELP'
-Usage: ./start.sh [ui|pick-place|gripper|test|setup] [options]
+Usage: ./start.sh [ui|pick-place|vision|gripper|test|setup] [options]
 
   ./start.sh                              Install dependencies and open RTDE UI
   ./start.sh --demo                       Open simulated UI; no robot required
   ./start.sh --config pick_place.json     Initialize UI limits from a recipe
   ./start.sh --no-browser --port 8765      Start backend without opening browser
   ./start.sh pick-place --config pick_place.json --dry-run
+  ./start.sh vision observe --config pick_place.json --vision vision.json
+  ./start.sh vision vision-pick --config pick_place.json --vision vision.json
   ./start.sh gripper ports
   ./start.sh test                         Run offline tests
   ./start.sh setup                        Install hardware dependencies only
@@ -22,8 +24,9 @@ HELP
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 mode=ui
-case "${1:-}" in ui|pick-place|gripper|test|setup) mode="$1"; shift ;; esac
+case "${1:-}" in ui|pick-place|vision|gripper|test|setup) mode="$1"; shift ;; esac
 extras=hardware
+if [[ "$mode" == vision ]]; then extras=hardware,vision; fi
 for arg in "$@"; do
   if [[ "$arg" == --demo && "$mode" == ui ]]; then extras=; fi
 done
@@ -51,6 +54,10 @@ if ! "$venv_python" -c 'import sys; raise SystemExit(sys.version_info < (3,10))'
   echo 'The existing .venv needs Python 3.10 or newer. Move it aside and rerun.' >&2
   exit 1
 fi
+if [[ "$mode" == vision ]] && ! "$venv_python" -c 'import sys; raise SystemExit(sys.version_info < (3,11))'; then
+  echo 'Vision needs Python 3.11 or newer. Move .venv aside and rerun with PYTHON_BIN=python3.12.' >&2
+  exit 1
+fi
 fingerprint="$("$venv_python" - "$extras" <<'PY'
 import hashlib, pathlib, sys
 print(hashlib.sha256(pathlib.Path('pyproject.toml').read_bytes() + sys.argv[1].encode() + sys.version.encode()).hexdigest())
@@ -68,6 +75,15 @@ export PYTHONUNBUFFERED=1
 case "$mode" in
   ui) exec "$venv_python" -m ur_pick_place.ui "$@" ;;
   pick-place) exec "$venv_python" -m ur_pick_place "$@" ;;
+  vision)
+    for sibling in charuco-generator charuco-realsense; do
+      module="${sibling//-/_}"
+      if ! "$venv_python" -c "import $module" >/dev/null 2>&1 && [[ -d "$project_dir/../$sibling" ]]; then
+        echo "Installing ../$sibling (editable, --no-deps)…"
+        "$venv_python" -m pip install --disable-pip-version-check --no-deps -e "$project_dir/../$sibling"
+      fi
+    done
+    exec "$venv_python" -m ur_pick_place.vision "$@" ;;
   gripper) exec "$venv_python" -m ur_pick_place.grippers.arduino_driver "$@" ;;
   test) exec "$venv_python" -m unittest discover -s tests "$@" ;;
   setup) echo 'Dependencies installed. Run ./start.sh to open Robot Bench.' ;;
