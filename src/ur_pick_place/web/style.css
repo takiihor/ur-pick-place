@@ -100,16 +100,22 @@ h3{font-size:16px;letter-spacing:-.3px;font-weight:650;margin:0}
 .joint-readout{border-top:1px solid var(--border);padding-top:14px}
 .joint-values{font:12px/1.6 ui-monospace,monospace;color:#354355;display:grid;grid-template-columns:repeat(3,1fr);gap:4px 10px;margin-top:8px}
 .record-dot{height:7px;width:7px;background:var(--blue);border-radius:50%;box-shadow:0 0 0 5px var(--blue-light);margin-right:5px}
-#record-form{display:flex;gap:10px;align-items:flex-end}
-#record-form label{flex:1;min-width:0}
+.record-row{display:flex;gap:10px;align-items:flex-end}
+.record-row label{flex:1;min-width:0}
+#record-mode{margin-top:8px}
 #record-form input{font-size:13px;height:40px}
 #record-form button{height:40px;white-space:nowrap}
-.jog-heading{display:flex;justify-content:space-between;align-items:center;margin:0 0 10px;gap:8px;font-size:11px;font-weight:600}
-.jog-heading label{font-size:10px;font-weight:400;white-space:nowrap;display:flex;gap:6px;align-items:center}
-.jog-heading input{width:57px;padding:5px 6px;margin:0;font-size:11px}
+.jog-heading{margin:0 0 8px;font-size:11px;font-weight:600}
+.jog-speed{margin:0 0 12px}
+.jog-speed label{display:flex;justify-content:space-between;gap:8px;font-size:11px}
+.jog-speed output{color:var(--blue);font-variant-numeric:tabular-nums}
+.jog-speed input[type=range]{display:block;width:100%;height:24px;margin:4px 0 0;padding:0;border:0;box-shadow:none;accent-color:var(--blue);cursor:pointer}
+.jog-speed>div{display:flex;justify-content:space-between;font-size:10px;color:var(--muted)}
 .jog-grid{display:grid;gap:6px}
 .axis-row{display:grid;grid-template-columns:28px 1fr 1fr;gap:8px;align-items:center}
 .axis-row button{font-size:12px;padding:7px}
+[data-axis]{touch-action:none;user-select:none;-webkit-user-select:none}
+[data-axis].jog-active{background:var(--blue-light);border-color:var(--blue)}
 .axis{font-size:11px;font-weight:700}
 .axis.x{color:#b85d5d}
 .axis.y{color:#39846a}
@@ -244,7 +250,7 @@ main{padding:16px 16px 8px}
 .workspace-grid{grid-template-columns:1fr}
 .panel{padding:18px}
 .readouts strong{font-size:20px}
-#record-form{flex-direction:column;align-items:stretch}
+.record-row{flex-direction:column;align-items:stretch}
 .sequence-selectors,.sequence-options,.pressure-fields{grid-template-columns:repeat(2,1fr)}
 .sequence-selectors>label:first-child{grid-column:1/-1}
 .gripper-select{max-width:none}
