@@ -55,7 +55,7 @@ class ArduinoGripper:
         try:
             time.sleep(startup_wait_s)
             self._serial.reset_input_buffer()
-        except Exception:
+        except BaseException:
             self._serial.close()
             raise
 

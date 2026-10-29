@@ -101,53 +101,6 @@ class SessionRobot(RTDERobot):
             self.pause(.01)
         return sum(values)/len(values)
 
-    def _move(self, mode, target, speed, acceleration):
-        if self.force_active:
-            raise SequenceError('Position movement blocked while force mode is active')
-        self._read()
-        if mode == 'joint':
-            self._require_success(self.control.isJointsWithinSafetyLimits(target), 'Joint safety check')
-            self.validator.validate_pose(self.control.getForwardKinematics(target))
-        else:
-            self.validator.validate_pose(target)
-            self._require_success(self.control.isPoseWithinSafetyLimits(target), 'TCP safety check')
-        before = self.control.getAsyncOperationProgress()
-        started = False
-        deadline = time.monotonic()+120
-        try:
-            method = self.control.moveJ if mode == 'joint' else self.control.moveL
-            self._require_success(method(target, speed, acceleration, True), 'Sequence movement')
-            while True:
-                self._read()
-                progress = self.control.getAsyncOperationProgress()
-                if progress >= 0:
-                    started = True
-                elif started or progress != before:
-                    break
-                if time.monotonic() > deadline:
-                    raise SequenceError('Sequence movement timed out')
-                self.pause(.01)
-        except BaseException:
-            try:
-                if mode == 'joint':
-                    self.control.stopJ(1.0)
-                else:
-                    self.control.stopL(1.0)
-            except Exception as exc:
-                self.stop_failed = True
-                raise SequenceError(f'Cannot stop sequence movement: {exc}') from exc
-            raise
-        self.pause(self.config.motion.settle_s)
-
-    def move_joints(self, joints):
-        c = self.config.motion
-        self._move('joint', joints, c.joint_speed_rad_s, c.joint_accel_rad_s2)
-
-    def move_linear(self, pose, grasp_speed=False):
-        c = self.config.motion
-        self._move('tcp', pose, (c.grasp_speed_mm_s if grasp_speed else c.transit_speed_mm_s)/1000,
-                   c.tcp_accel_m_s2)
-
     def probe(self, settings, *, endpoint_z=None, guard=lambda: None):
         if self.demo:
             self.control.prepare_probe(endpoint_z if endpoint_z is not None else self.config.place_pose[2]+.02)
@@ -156,7 +109,6 @@ class SessionRobot(RTDERobot):
     def close(self):
         # Connection belongs to the manual worker.
         self.stop_force()
-
 
 class DemoGripper:
     """Simulates verification only; never imports a hardware driver."""

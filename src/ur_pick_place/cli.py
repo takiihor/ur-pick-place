@@ -10,6 +10,12 @@ from .controller import PickPlaceController
 
 
 def main(argv=None):
+    from .shutdown import stop_on_termination
+    with stop_on_termination():
+        return _main(argv)
+
+
+def _main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--pick-pose-file', type=Path,

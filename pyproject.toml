@@ -13,11 +13,18 @@ dependencies = []
 robot = ["ur-rtde>=1.5.0"]
 arduino = ["pyserial>=3.5"]
 hardware = ["ur-rtde>=1.5.0", "pyserial>=3.5"]
+# Wrist-camera targeting (Python 3.11+, same pins as charuco-realsense). ChArUco boards and live
+# capture also need the sibling packages: pip install --no-deps -e ../charuco-generator -e ../charuco-realsense
+vision = ["numpy==2.3.5", "opencv-python==4.11.0.86", "pyrealsense2==2.59.1.11053",
+          "Pillow==12.0.0", "reportlab==4.4.5", "pypdf==6.1.3",
+          "packaging==25.0", "charset-normalizer==3.4.4"]
 
 [project.scripts]
 ur-pick-place = "ur_pick_place.cli:main"
 arduino-gripper = "ur_pick_place.grippers.arduino_driver:main"
 ur-robot-ui = "ur_pick_place.ui:main"
+ur-marker-teach = "ur_pick_place.vision.teach_ui:main"
+ur-vision = "ur_pick_place.vision.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

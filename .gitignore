@@ -6,4 +6,8 @@ build/
 dist/
 /pick_place.json
 /target.json
+/vision.json
+/handeye.json
+/grasp_pick.json
+/grasp_place.json
 /data/

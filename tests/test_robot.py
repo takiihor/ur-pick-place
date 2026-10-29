@@ -47,6 +47,12 @@ class ProbeTests(unittest.TestCase):
             r.probe(r.config.place_probe)
         r.control.forceModeStop.assert_called_once()
 
+    def test_contact_beyond_travel_budget_is_not_accepted(self):
+        r = self.make_robot([self.sample(.35), self.sample(.35), self.sample(.19, 20)])
+        with self.assertRaisesRegex(SequenceError, 'travel budget exceeded'):
+            r.probe(r.config.place_probe)
+        r.control.forceModeStop.assert_called_once()
+
     def test_stop_failure_prevents_success(self):
         r = self.make_robot([self.sample(.35), self.sample(.35), self.sample(.25)], stop=False)
         with self.assertRaisesRegex(SequenceError, 'Force mode stop'):
@@ -98,3 +104,44 @@ class ProbeTests(unittest.TestCase):
     def test_equivalent_rotation_vectors(self):
         self.assertAlmostEqual(rotation_distance([0, 3.141592653589793, 0],
                                                  [0, -3.141592653589793, 0]), 0)
+
+
+class AsyncMoveTests(unittest.TestCase):
+    def make_robot(self):
+        robot = RTDERobot.__new__(RTDERobot)
+        robot.config = recipe()
+        robot.control = Mock()
+        robot.receive = Mock()
+        robot.force_active = False
+        robot.stop_failed = False
+        robot.validator = PickPlaceController(robot.config)
+        robot._read = Mock(return_value=ProbeTests.sample(.35))
+        robot.control.getForwardKinematics.return_value = ProbeTests.sample(.35)[0]
+        robot.control.isJointsWithinSafetyLimits.return_value = True
+        robot.control.isPoseWithinSafetyLimits.return_value = True
+        robot.control.moveJ.return_value = True
+        robot.control.stopJ.return_value = True
+        return robot
+
+    def test_interrupt_stops_async_joint_move(self):
+        robot = self.make_robot()
+        robot.control.getAsyncOperationProgress.side_effect = [-1, KeyboardInterrupt()]
+        with self.assertRaises(KeyboardInterrupt):
+            robot.move_joints(robot.config.home_joints)
+        self.assertIs(robot.control.moveJ.call_args.args[-1], True)
+        robot.control.stopJ.assert_called_once()
+
+    def test_stop_failure_is_reported(self):
+        robot = self.make_robot()
+        robot.control.getAsyncOperationProgress.side_effect = [-1, KeyboardInterrupt()]
+        robot.control.stopJ.return_value = False
+        with self.assertRaisesRegex(SequenceError, 'Cannot stop'):
+            robot.move_joints(robot.config.home_joints)
+        self.assertTrue(robot.stop_failed)
+
+    def test_joint_safety_is_checked_before_motion(self):
+        robot = self.make_robot()
+        robot.control.isJointsWithinSafetyLimits.return_value = False
+        with self.assertRaisesRegex(SequenceError, 'Joint safety'):
+            robot.move_joints(robot.config.home_joints)
+        robot.control.moveJ.assert_not_called()
