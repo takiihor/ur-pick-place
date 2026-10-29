@@ -16,6 +16,97 @@ The package executes:
 Both OnRobot RG2 and the supplied Arduino servo/pressure-pad firmware are
 supported. RG2 is the default, matching the previously tested procedure.
 
+## Marker Pick Teacher — separate guided app
+
+```sh
+./start_marker_teach.sh
+```
+
+Opens **http://127.0.0.1:8766**. This is a separate, read-only teaching app in
+this repository, reusing its vision formats and picking controller. Calibration
+stays in `ur10e-handeye`; no extra repository or Tk installation is needed.
+Starting it again opens the existing app and preserves its current work. If
+another application uses that port, run `./start_marker_teach.sh --port 8767`.
+
+The interface shows one step at a time with Back/Next navigation and completion
+lights. Project paths and movement limits live under **Project & advanced settings**.
+
+1. **Set up:** choose your `calibration.json`, robot IP and ChArUco board manifest/name.
+   A single ArUco marker is also supported: enter dictionary, ID and its measured
+   outer black side length (for example, 80 mm). Check the active gripper TCP.
+2. **Capture:** pendant-jog until the entire target is visible, stop, then capture.
+   A multi-frame quality check and image with coordinate axes confirm the result.
+3. **Teach:** keep the object/marker fixed. Pendant-jog the gripper to the desired
+   final pick endpoint, including orientation. Stop, confirm the marker stayed
+   fixed, and click **Read current TCP & save pick**.
+4. **Read/export:** return to the saved observation joints with the pendant.
+   Re-read the marker to calculate a fresh pick endpoint and an approach **100 mm
+   above it along robot-base +Z**. Green lights indicate completed steps.
+
+The camera mounting must match calibration. In this read-only workflow, the active
+TCP must also match `camera_in_tcp.tcp_offset` in that file; the app cannot set it
+for you. Keep this same gripper TCP for teaching and execution. Tool Z must point
+within 20 degrees of base -Z for the existing force-guided sequence.
+
+Choose **XY + yaw** when the object moves on a flat support (the marker itself may
+be vertical). **Full 3D** follows the measured pose, within the configured limits.
+Defaults permit 30 mm target displacement, 15 degrees rotation and 10 degrees tilt
+change; planar mode also limits height change to 10 mm. Re-teach for another
+working area. Use **Allowed movement from the taught target** in step 1 to set
+the displacement/rotation range; the execution recipe still checks its workspace.
+
+Projects persist under `data/marker-teaching/`. Enter a folder and choose **Open
+saved project**, or launch with `--project PATH`, to resume after checking the TCP.
+Capturing a new teaching reference invalidates the old pick relationship and
+archives it under `history/`. Failed fresh reads remove the previous generated
+pose exports. SDK operations run in a child process with a 90-second timeout.
+
+| File | Purpose |
+| --- | --- |
+| `vision.json` + `grasp_pick.json` | Reusable configuration and taught marker-to-gripper relationship for the existing vision CLI |
+| `observation.json` | Teaching reference, quality and observation joints |
+| `target.json` | Fresh six-number pick TCP array accepted by Robot Bench's **Camera target** or `--pick-pose-file` |
+| `pick_target.json` | Pick and approach poses, timestamp, TCP, calibration identity and quality |
+| `target.script` | URScript variables `vision_pick` and `vision_approach`; no motion commands |
+
+All exported poses use the **robot base frame**, metres and UR rotation-vector
+radians. Re-read the marker for each cycle; a downloaded/exported file is a static
+snapshot and does not update automatically. Keep all project files together;
+original calibration/manifest paths must remain accessible on the executing PC.
+
+### Execute using the existing picking software
+
+In Robot Bench, load `target.json` into **Camera target**, set pick approach to
+**100 mm**, and preview/run the configured cycle with your taught home/place poses
+and gripper settings. Repeat the marker read and target import for every new pick.
+For an automated fresh read each cycle, use the saved vision project with the CLI:
+
+```sh
+# From this repository; replace PROJECT with your saved project folder.
+./start.sh vision vision-pick --config pick_place.json --vision PROJECT/vision.json \
+  --preview-out PROJECT/cycle_preview.json
+
+# After reviewing the preview; this command MOVES the robot and operates the gripper.
+./start.sh vision vision-pick --config pick_place.json --vision PROJECT/vision.json \
+  --execute --preview PROJECT/cycle_preview.json
+```
+
+Configure `pick_approach_mm: 100` in your recipe. Its force search descends along
+base -Z until contact or the taught endpoint; reaching the endpoint can also allow
+a grip. Force mode is stopped before gripping. To grip at contact, set
+`pick_backoff_mm: 0` and `grasp_offset_mm: [0, 0, 0]`; configure force, speed, travel,
+timeout, lift and gripper feedback for your cell. The recipe defaults may apply a
+backoff after contact, so review them. The teacher never runs a force search.
+
+For PolyScope/URScript, load the exported pose variables into your own program:
+**approach → bounded base -Z force search → end force mode → grip/verify → lift**.
+Lift from the actual contact pose. Use a force task frame aligned with robot-base Z;
+force compliance is defined in the task frame ([UR force mode reference](https://www.universal-robots.com/manuals/EN/HTML/SW5_25/Content/prod-scriptmanual/all_scripts/force_mode_task_frame_selection_vector.htm)).
+Your program supplies contact detection, force/travel/time limits, grip feedback
+and motion checks. Pose export alone does not validate reachability or clearance.
+The new teacher is tested with rendered markers/fake robot feedback; physical
+teaching and execution still require validation on your cell.
+
 ## Start the backend and teaching UI
 
 From a clone of this repository:

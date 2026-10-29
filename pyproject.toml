@@ -23,6 +23,7 @@ vision = ["numpy==2.3.5", "opencv-python==4.11.0.86", "pyrealsense2==2.59.1.1105
 ur-pick-place = "ur_pick_place.cli:main"
 arduino-gripper = "ur_pick_place.grippers.arduino_driver:main"
 ur-robot-ui = "ur_pick_place.ui:main"
+ur-marker-teach = "ur_pick_place.vision.teach_ui:main"
 ur-vision = "ur_pick_place.vision.cli:main"
 
 [tool.setuptools.packages.find]
