@@ -9,9 +9,8 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-import numpy as np
-
 from vision_sim import (CAMERA_IN_FLANGE, MARKER_TCP, OBSERVE_PICK, TCP_OFFSET, calibration_dict, matrix_to_pose)
+import numpy as np
 from test_vision_pipeline import FakeRuntime, World
 from ur_pick_place.vision.grasp import load_taught
 from ur_pick_place.vision.errors import VisionError
