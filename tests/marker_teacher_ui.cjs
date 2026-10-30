@@ -8,6 +8,7 @@ const elements=Object.fromEntries(ids.map(id=>[id,{id,value:'',textContent:'',ch
 const settings={project:'/tmp/project',calibration:'/tmp/calibration.json',robot_ip:'fake',tcp:[0,0,.07,0,0,0],target:{kind:'charuco',board_manifest:'/tmp/board.json',board:'front'},motion_model:'planar',approach_mm:100,limits:{max_shift_mm:30,max_rotation_deg:15}};
 const project={settings,project:settings.project,flow:{captured:false,taught:false,exported:false},calibration:{verdict:'good',camera_serial:'fake'},target:'Test board',observe_joints:[0,0,0,0,0,0]};
 let locateAttempts=0,configuredTCP;
+let moveRequests=0;
 let state={version:'0.1.0',project:null,busy:null,error:'',completed:null};
 async function fetch(path,options){
  if(path==='/api/defaults')return{ok:true,json:async()=>({settings,calibrations:[{path:settings.calibration,tcp:settings.tcp,robot_ip:settings.robot_ip}],manifests:[]})};
@@ -23,9 +24,20 @@ async function fetch(path,options){
   if(locateAttempts++===0){state.completed=null;state.failed='locate';state.error='Test: unstable marker';}
   else{state.completed='locate';state.failed=null;state.error='';project.flow.exported=true;project.exported={pick_tcp_pose_m_rad:[.4,.1,.2,0,3.14,0],approach_tcp_pose_m_rad:[.4,.1,.3,0,3.14,0]};}
  }
+ if(path==='/api/validation/capture'){
+  project.validation={...project.exported,id:'capture-'+Date.now(),timestamp:Date.now()/1000,status:'captured',marker_tcp_pose_m_rad:[.4,.1,.2,0,0,0],quality:{frames_accepted:10,reprojection_rmse_px:.2},validation:{shift_from_taught_mm:10,rotation_from_taught_deg:5,marker_yaw_change_deg:5}};
+  state.completed='capture_validation';
+ }
+ if(path==='/api/validation/move'){
+  const body=JSON.parse(options.body);assert.equal(body.capture_id,project.validation.id);assert.equal(body.path_confirmed,true);
+  assert.deepEqual(body.workspace_min_m,[-.9,-.9,.02]);assert.deepEqual(body.workspace_max_m,[.9,.9,1.2]);
+  moveRequests++;project.validation.status='completed';project.validation.actual_tcp_pose_m_rad=project.validation.approach_tcp_pose_m_rad;project.validation.error={position_mm:.1,rotation_deg:.01};project.validation_history=[structuredClone(project.validation)];state.completed='validate_move';
+ }
+ if(path==='/api/validation/review'){project.validation.visual_result=JSON.parse(options.body).result;project.validation_history=[structuredClone(project.validation)];}
+ if(path==='/api/validation/stop'&&project.validation?.status==='captured')project.validation.status='cancelled';
  return{ok:true,json:async()=>({accepted:true})};
 }
-const document={getElementById:id=>elements[id],querySelector:()=>({content:'token'}),querySelectorAll:()=>[],createElement:()=>({})};
+const document={getElementById:id=>elements[id],querySelector:()=>({content:'token'}),querySelectorAll:()=>[],createElement:()=>({}),addEventListener(){}};
 vm.runInNewContext(fs.readFileSync(root+'teacher.js','utf8'),{document,fetch,console,setInterval(){}});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
@@ -82,13 +94,38 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
  assert.equal(elements.locate.disabled,false);
  elements.next.events.click();
  assert.equal(elements['step-locate'].hidden,false);
- assert.equal(elements.next.hidden,true);
+ assert.equal(elements.next.hidden,false);
+ assert.equal(elements['nav-validate'].disabled,true);
  elements.locate.events.click();await tick();await tick();
  assert.match(elements.message.textContent,/unstable marker/); // instant failure before first busy poll
  assert.equal(elements['light-locate'].textContent,'● Failed');
  elements.locate.events.click();await tick();await tick();
  assert.equal(elements['light-locate'].textContent,'● Ready');
  assert.equal(elements['export-result'].hidden,false);
+ elements.next.events.click();
+ assert.equal(elements['step-validate'].hidden,false);
+ assert.equal(elements.next.hidden,true);
+ assert.equal(elements['validation-move'].disabled,true);
+ elements['validation-capture'].events.click();await tick();await tick();
+ assert.equal(elements['validation-preview'].hidden,false);
+ assert.equal(elements['validation-image'].hidden,false);
+ assert.equal(elements['validation-move'].disabled,true);
+ elements['validation-speed'].value='10';elements['validation-workspace-min'].value='-900, -900, 20';elements['validation-workspace-max'].value='900, 900, 1200';
+ elements['validation-confirmed'].checked=true;elements['validation-confirmed'].events.change();
+ assert.equal(elements['validation-move'].disabled,false);
+ await elements['validation-move'].events.click();await tick();await tick();
+ assert.equal(moveRequests,1);
+ assert.equal(elements['validation-move'].disabled,true);
+ assert.match(elements['validation-motion-result'].textContent,/TCP error: 0.10 mm/);
+ assert.equal(elements['light-validate'].textContent,'● Pending'); // requires visual alignment
+ await elements['validation-aligned'].events.click();
+ assert.equal(elements['light-validate'].textContent,'● Ready');
+ assert.match(elements['validation-history'].textContent,/visual: aligned/);
+ elements['validation-capture'].events.click();await tick();await tick();
+ elements['validation-confirmed'].checked=true;elements['validation-confirmed'].events.change();
+ await elements['validation-stop'].events.click();
+ assert.equal(elements['validation-move'].disabled,true);
+ elements['nav-locate'].events.click();
  elements.back.events.click();
  assert.equal(elements['step-teach'].hidden,false);
  elements['nav-configure'].events.click();

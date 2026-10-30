@@ -93,6 +93,33 @@ class MarkerTeachingTests(unittest.TestCase):
             self.assertFalse((self.project.directory / name).exists())
         self.assertFalse(self.world.rtde.connected)
 
+    def test_validation_rotation_preserves_teaching_and_exports(self):
+        self.capture_and_teach()
+        self.project.locate()
+        reference = (self.project.directory / 'observation.json').read_bytes()
+        grasp = (self.project.directory / 'grasp_pick.json').read_bytes()
+        exported = (self.project.directory / 'target.json').read_bytes()
+        self.world.move_pick(10, -8, 5)
+        record = self.project.capture_validation()
+        expected = self.world.pick @ MARKER_TCP
+        np.testing.assert_allclose(pose_to_matrix(record['pick_tcp_pose_m_rad']), expected, atol=.002)
+        self.assertAlmostEqual(record['validation']['marker_yaw_change_deg'], 5, delta=.3)
+        self.assertEqual((self.project.directory / 'observation.json').read_bytes(), reference)
+        self.assertEqual((self.project.directory / 'grasp_pick.json').read_bytes(), grasp)
+        self.assertEqual((self.project.directory / 'target.json').read_bytes(), exported)
+        self.assertTrue(self.project.flow['exported'])
+        self.assertTrue((self.project.directory / 'validation.jpg').exists())
+        self.project.record_validation(dict(record, status='completed', visual_result='aligned'))
+        reopened = TeachingProject(self.settings, runtime=self.runtime)
+        self.assertIsNone(reopened.validation)
+        self.assertEqual(reopened.validation_history[0]['visual_result'], 'aligned')
+        self.world.move_pick(100, 0, 0)
+        with self.assertRaises(VisionError):
+            self.project.capture_validation()
+        self.assertIsNone(self.project.validation)
+        self.assertFalse((self.project.directory / 'validation_capture.json').exists())
+        self.assertEqual((self.project.directory / 'target.json').read_bytes(), exported)
+
     def test_capture_again_invalidates_taught_offset(self):
         self.capture_and_teach()
         self.project.capture()
@@ -136,6 +163,28 @@ class MarkerTeachingTests(unittest.TestCase):
         self.assertIn('Calibration TCP (XYZ mm / rotation-vector rad): 0, 0, 200, 0, 0, 0', str(caught.exception))
         self.assertIn(self.settings['calibration'], str(caught.exception))
         self.assertFalse(self.runtime.calls)
+
+    def test_validation_worker_preserves_exports_on_success_and_failure(self):
+        self.capture_and_teach()
+        exported = self.project.locate()
+        record = self.project.capture_validation()
+        service = TeachingService(self.root)
+        service.project = self.project
+        self.addCleanup(service.close)
+        success = Mock(returncode=0)
+        success.communicate.return_value = ('', '')
+        with patch('ur_pick_place.vision.teach_ui.subprocess.Popen', return_value=success):
+            service._run('capture_validation', self.settings)
+        self.assertEqual(service.project.validation['id'], record['id'])
+        self.assertEqual(service.project.exported, exported)
+        self.assertTrue(service.project.flow['exported'])
+        failed = Mock(returncode=1)
+        failed.communicate.return_value = ('', 'Marker detection failed')
+        with patch('ur_pick_place.vision.teach_ui.subprocess.Popen', return_value=failed):
+            service._run('capture_validation', self.settings)
+        self.assertIsNone(service.project.validation)
+        self.assertEqual(service.project.exported, exported)
+        self.assertTrue(service.project.flow['taught'])
 
     def test_defaults_prefer_local_tcp_copy_and_skip_invalid_calibrations(self):
         repo = self.root / 'pick-place'

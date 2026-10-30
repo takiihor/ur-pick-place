@@ -27,3 +27,4 @@ jobs:
       # integration is also tested locally with the sibling generator/detector.
       - run: python -m unittest discover -s tests -p 'test_vision*.py' -v
       - run: python -m unittest discover -s tests -p 'test_marker_teaching.py' -v
+      - run: python -m unittest discover -s tests -p 'test_marker_validation*.py' -v

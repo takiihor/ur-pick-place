@@ -1,16 +1,17 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="teach-token" content="__TEACH_TOKEN__"><title>Marker Pick Teacher</title><link rel="stylesheet" href="/teacher.css"><script src="/teacher.js" defer></script></head>
-<body><header><div class="brand"><span class="brand-icon" aria-hidden="true">⌖</span><div><h1>Marker Pick Teacher <span id="version"></span></h1><p>UR10e · marker-relative picking</p></div></div><span class="readonly">Read-only · move with pendant</span></header>
+<body><header><div class="brand"><span class="brand-icon" aria-hidden="true">⌖</span><div><h1>Marker Pick Teacher <span id="version"></span></h1><p>UR10e · marker-relative picking</p></div></div><button id="validation-stop" type="button" class="danger">Stop motion</button></header>
 <main>
 <nav class="stepper" aria-label="Teaching steps">
 <button id="nav-configure" type="button" aria-controls="step-configure"><span class="step-number">1</span><span>Set up<small id="nav-state-configure">Pending</small></span></button>
 <button id="nav-capture" type="button" aria-controls="step-capture" disabled><span class="step-number">2</span><span>Capture marker<small id="nav-state-capture">Pending</small></span></button>
 <button id="nav-teach" type="button" aria-controls="step-teach" disabled><span class="step-number">3</span><span>Teach pick<small id="nav-state-teach">Pending</small></span></button>
 <button id="nav-locate" type="button" aria-controls="step-locate" disabled><span class="step-number">4</span><span>Read &amp; export<small id="nav-state-locate">Pending</small></span></button>
+<button id="nav-validate" type="button" aria-controls="step-validate" disabled><span class="step-number">5</span><span>Validation<small id="nav-state-validate">Pending</small></span></button>
 </nav>
 <div id="message" role="status" aria-live="polite">Choose your camera calibration and marker to begin.</div>
 <div class="workspace"><div class="step-content">
-<section id="step-configure" aria-labelledby="title-configure"><div class="section-heading"><span class="eyebrow">STEP 1 OF 4</span><h2 id="title-configure" tabindex="-1">Connect your setup</h2><p>Choose the calibration and target you will use for this pick.</p></div>
+<section id="step-configure" aria-labelledby="title-configure"><div class="section-heading"><span class="eyebrow">STEP 1 OF 5</span><h2 id="title-configure" tabindex="-1">Connect your setup</h2><p>Choose the calibration and target you will use for this pick.</p></div>
 <form id="setup" novalidate><div class="fields">
 <label class="wide">Camera calibration<input id="calibration" list="calibrations" required placeholder="Path to calibration.json"><datalist id="calibrations"></datalist></label>
 <label>Robot IP<input id="robot_ip" required placeholder="192.168.12.248"></label><label>Marker type<select id="kind"><option value="charuco">ChArUco board</option><option value="aruco">Single ArUco marker</option></select></label>
@@ -27,18 +28,42 @@
 </div></details>
 <div class="actions"><button id="configure" type="submit" class="primary">Check setup &amp; continue →</button><span id="light-configure" class="light">● Pending</span></div></form>
 <details id="setup-details" class="technical" hidden><summary>Setup details</summary><p id="setup-result" class="result"></p></details></section>
-<section id="step-capture" aria-labelledby="title-capture" hidden><div class="section-heading"><span class="eyebrow">STEP 2 OF 4</span><h2 id="title-capture" tabindex="-1">Capture your marker</h2><p>Use the pendant to show the whole marker, then stop the arm.</p></div>
+<section id="step-capture" aria-labelledby="title-capture" hidden><div class="section-heading"><span class="eyebrow">STEP 2 OF 5</span><h2 id="title-capture" tabindex="-1">Capture your marker</h2><p>Use the pendant to show the whole marker, then stop the arm.</p></div>
 <div class="camera-stage"><div id="camera-placeholder"><span aria-hidden="true">⌖</span><strong>Your captured view appears here</strong><p>Position the camera, then choose Capture marker.</p></div><img id="capture-image" alt="Captured marker with detected coordinate axes" hidden></div><p id="capture-result" class="result"></p>
 <div class="actions"><button id="capture" class="primary" disabled>Capture marker</button><span id="light-capture" class="light">● Pending</span></div><p class="hint">Review the image before continuing. Capturing again replaces the reference and requires re-teaching the pick.</p></section>
-<section id="step-teach" aria-labelledby="title-teach" hidden><div class="section-heading"><span class="eyebrow">STEP 3 OF 4</span><h2 id="title-teach" tabindex="-1">Teach the picking position</h2><p>Keep the marker fixed. Move the gripper to the final pick endpoint.</p></div>
+<section id="step-teach" aria-labelledby="title-teach" hidden><div class="section-heading"><span class="eyebrow">STEP 3 OF 5</span><h2 id="title-teach" tabindex="-1">Teach the picking position</h2><p>Keep the marker fixed. Move the gripper to the final pick endpoint.</p></div>
 <ol class="instructions"><li><strong>Position the gripper</strong><span>Jog with the pendant to the desired position and orientation.</span></li><li><strong>Stop the arm</strong><span>Keep tool Z approximately down for a base −Z force search.</span></li><li><strong>Save the relationship</strong><span>The app records this TCP position relative to the marker.</span></li></ol>
 <label class="check confirmation"><input id="marker_unchanged" type="checkbox">The marker/object has not moved since capture.</label>
 <div class="actions"><button id="teach" class="primary" disabled>Read current TCP &amp; save pick</button><span id="light-teach" class="light">● Pending</span></div><p id="teach-result" class="result saved-result"></p><p class="hint">Teach the lower endpoint of the search. Contact may stop the descent earlier.</p></section>
-<section id="step-locate" aria-labelledby="title-locate" hidden><div class="section-heading"><span class="eyebrow">STEP 4 OF 4</span><h2 id="title-locate" tabindex="-1">Read the marker. Get your pick.</h2><p>Return to the observation pose using the pendant, then read again.</p></div>
+<section id="step-locate" aria-labelledby="title-locate" hidden><div class="section-heading"><span class="eyebrow">STEP 4 OF 5</span><h2 id="title-locate" tabindex="-1">Read the marker. Get your pick.</h2><p>Return to the observation pose using the pendant, then read again.</p></div>
 <div class="observation"><span class="eyebrow">RETURN TO THESE JOINTS</span><p id="observe-joints">Observation joints appear after capture.</p></div>
 <div class="actions"><button id="locate" class="primary" disabled>Read marker &amp; export poses</button><span id="light-locate" class="light">● Pending</span></div>
 <div id="export-result" hidden><div class="poses"><div><h3>Pick endpoint</h3><pre id="pick-pose"></pre><a href="/api/download/target.json" class="download">↓ Pick pose JSON</a></div><div><h3>Approach above pick</h3><pre id="approach-pose"></pre><span class="pose-note">Along robot-base +Z</span></div></div><div class="downloads"><a href="/api/download/target.script">URScript variables</a><a href="/api/download/pick_target.json">Full report</a></div><p class="hint">Base frame · metres / rotation-vector radians. Re-read for each pick.</p></div>
 <details class="technical"><summary>Use in your picking program</summary><p>Read marker → approach → bounded base −Z force search → stop force mode → grip &amp; verify → lift from actual contact.</p><p>The executor supplies force, travel/time limits, gripper I/O and motion checks. URScript export contains pose variables only.</p><div id="saved-links" class="downloads" hidden><a href="/api/download/vision.json">Vision configuration</a><a href="/api/download/grasp_pick.json">Marker-to-pick relationship</a></div><p id="movement-limits"></p><p class="hint">Tilt change ≤10°, planar height change ≤10 mm, tool tilt ≤20° from base −Z.</p><p id="storage" class="result"></p></details></section>
-</div><aside><div class="aside-label">YOUR NEXT ACTION</div><h3 id="guide-title">Prepare your setup</h3><p id="guide-text">Use the calibration for this camera and its unchanged wrist mounting.</p><div class="aside-rule"></div><span class="aside-label">HOW IT WORKS</span><p class="mini-flow">Capture a reference<br><span>↓</span><br>Teach a pick relative to it<br><span>↓</span><br>Read again to update the pick</p><div class="aside-note">This app reads positions.<br>Move the robot with the pendant.</div></aside></div>
-<footer class="wizard-footer"><button id="back" type="button" class="secondary" disabled>← Back</button><span id="step-counter">Step 1 of 4</span><button id="next" type="button" class="secondary" disabled>Next: Capture marker →</button></footer>
+<section id="step-validate" aria-labelledby="title-validate" hidden>
+<div class="section-heading"><span class="eyebrow">STEP 5 OF 5</span><h2 id="title-validate" tabindex="-1">Validate with the robot</h2><p>Reposition the marker and its object together. Return to the saved observation joints with the pendant, then stop and capture.</p></div>
+<p id="validation-observe-joints" class="result"></p>
+<div class="camera-stage"><p id="validation-placeholder">Capture the marker to review its new pose.</p><img id="validation-image" alt="Validation marker capture with detected coordinate axes" hidden></div>
+<div class="actions"><button id="validation-capture" type="button" class="primary" disabled>Capture for validation</button><span id="light-validate" class="light">● Pending</span></div>
+<div id="validation-preview" hidden>
+<p id="validation-quality" class="result"></p>
+<div class="poses"><div><h3>Captured marker pose</h3><pre id="validation-marker-pose"></pre></div><div><h3>Calculated pick endpoint</h3><pre id="validation-pick-pose"></pre></div><div><h3>Approach target · base +Z above pick</h3><pre id="validation-approach-pose"></pre></div><div><h3>Change from teaching</h3><p id="validation-change" class="result"></p></div></div>
+<p class="hint">All displayed poses: robot base · XYZ millimetres · RX, RY, RZ rotation-vector radians.</p>
+<p id="validation-freshness" class="result"></p>
+</div>
+<details id="validation-settings" open><summary>Test motion settings</summary><div class="fields">
+<label>Speed (mm/s)<input id="validation-speed" type="number" min="1" max="20" step="1" value="10"></label>
+<label>Workspace minimum XYZ (mm)<input id="validation-workspace-min" value="-900, -900, 20"></label>
+<label class="wide">Workspace maximum XYZ (mm)<input id="validation-workspace-max" value="900, 900, 1200"></label>
+</div><p class="hint">Set these bounds for your cell. The start and target must fit inside them. Robot safety and reachability checks also apply; these checks do not detect obstacles along the path.</p></details>
+<label class="check confirmation"><input id="validation-confirmed" type="checkbox">The marker/object has stayed fixed since this capture. I reviewed the target, workspace and clear linear approach path.</label>
+<div class="actions"><button id="validation-move" type="button" class="primary" disabled>Move to approach position</button></div>
+<p class="hint">One slow linear move to the approach pose. Keep this tab active during motion. Each attempt requires a fresh capture within 60 seconds. Use the pendant to return for another test.</p>
+<div id="validation-result" hidden><h3>Motion result</h3><p id="validation-motion-result" class="result"></p><pre id="validation-actual-pose"></pre>
+<p class="hint">TCP agreement checks motion completion. Visually check the gripper's alignment above the intended pick to assess the camera-derived target.</p>
+<div class="actions"><button id="validation-aligned" type="button" class="secondary">Alignment looks correct</button><button id="validation-misaligned" type="button" class="secondary">Alignment needs adjustment</button></div></div>
+<details open><summary>Test history</summary><p id="validation-history" class="result">No motion tests yet.</p></details>
+</section>
+</div><aside><div class="aside-label">YOUR NEXT ACTION</div><h3 id="guide-title">Prepare your setup</h3><p id="guide-text">Use the calibration for this camera and its unchanged wrist mounting.</p><div class="aside-rule"></div><span class="aside-label">HOW IT WORKS</span><p class="mini-flow">Capture a reference<br><span>↓</span><br>Teach a pick relative to it<br><span>↓</span><br>Read again to update the pick</p><div class="aside-note">Teach and return with the pendant.<br>Step 5 can test an approach move.</div></aside></div>
+<footer class="wizard-footer"><button id="back" type="button" class="secondary" disabled>← Back</button><span id="step-counter">Step 1 of 5</span><button id="next" type="button" class="secondary" disabled>Next: Capture marker →</button></footer>
 </main></body></html>
