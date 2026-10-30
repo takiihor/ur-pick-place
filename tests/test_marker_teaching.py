@@ -9,10 +9,10 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-import numpy as np
-
 from vision_sim import (CAMERA_IN_FLANGE, MARKER_TCP, OBSERVE_PICK, TCP_OFFSET, calibration_dict, matrix_to_pose)
+import numpy as np
 from test_vision_pipeline import FakeRuntime, World
+from test_vision_detection import HAVE_CHARUCO
 from ur_pick_place.vision.grasp import load_taught
 from ur_pick_place.vision.errors import VisionError
 from ur_pick_place.vision.teaching import TeachingProject, defaults, read_json
@@ -130,10 +130,35 @@ class MarkerTeachingTests(unittest.TestCase):
         path.write_text(json.dumps(raw))
         with self.assertRaisesRegex(VisionError, 'Simulated calibration'):
             TeachingProject(dict(self.settings, calibration=str(path), project=str(self.root / 'sim-project')))
-        with self.assertRaisesRegex(ValueError, 'active gripper TCP'):
+        with self.assertRaisesRegex(ValueError, 'active gripper TCP') as caught:
             TeachingProject(dict(self.settings, tcp=[0]*6, project=str(self.root / 'other-project')))
+        self.assertIn('Entered TCP (XYZ mm / rotation-vector rad): 0, 0, 0, 0, 0, 0', str(caught.exception))
+        self.assertIn('Calibration TCP (XYZ mm / rotation-vector rad): 0, 0, 200, 0, 0, 0', str(caught.exception))
+        self.assertIn(self.settings['calibration'], str(caught.exception))
         self.assertFalse(self.runtime.calls)
 
+    def test_defaults_prefer_local_tcp_copy_and_skip_invalid_calibrations(self):
+        repo = self.root / 'pick-place'
+        original = self.root / 'ur10e-handeye' / 'sessions' / 'original' / 'calibration.json'
+        local = repo / 'data' / 'calibrations' / 'rg2' / 'calibration.json'
+        invalid = repo / 'data' / 'calibrations' / 'zzz-invalid' / 'calibration.json'
+        simulated = repo / 'data' / 'calibrations' / 'zzz-simulation' / 'calibration.json'
+        for path in (original, local, invalid, simulated):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        original.write_text(json.dumps(calibration_dict(tcp_offset=[0]*6)))
+        tcp = [0, 0, .2286, 0, 0, 0]
+        local.write_text(json.dumps(calibration_dict(tcp_offset=tcp)))
+        invalid.write_text('{}')
+        demo = calibration_dict()
+        demo['simulation_truth'] = {'demo': True}
+        simulated.write_text(json.dumps(demo))
+        discovered = defaults(repo)
+        self.assertEqual([c['path'] for c in discovered['calibrations']], [str(local), str(original)])
+        self.assertEqual(discovered['settings']['calibration'], str(local))
+        self.assertEqual(discovered['settings']['tcp'], tcp)
+        self.assertFalse(self.runtime.calls)
+
+    @unittest.skipUnless(HAVE_CHARUCO, 'charuco-generator/charuco-realsense not installed')
     def test_charuco_capture_uses_same_teaching_pipeline(self):
         from vision_sim import FakeCamera, camera_view_point, face_up
         from ur_pick_place.vision.targets import target_from_config

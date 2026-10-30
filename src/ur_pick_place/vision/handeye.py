@@ -40,6 +40,7 @@ class HandEyeCalibration:
     sha256: str = ''
     simulated: bool = False
     camera_serial: str | None = None
+    recorded_camera_intrinsics: dict | None = None
 
     def require_hardware(self):
         if self.simulated:
@@ -147,11 +148,17 @@ def parse_handeye(raw, *, source='', sha256=''):
     metrics = raw.get('metrics') if isinstance(raw.get('metrics'), dict) else {}
     camera = raw.get('camera') if isinstance(raw.get('camera'), dict) else {}
     device = camera.get('device') if isinstance(camera.get('device'), dict) else {}
+    intrinsics = check_intrinsics(raw.get('intrinsics'))
+    recorded_intrinsics = (check_intrinsics(camera['intrinsics'], 'camera.intrinsics')
+                           if 'intrinsics' in camera else None)
+    if recorded_intrinsics is not None and any(recorded_intrinsics[k] != intrinsics[k] for k in ('width', 'height')):
+        raise CalibrationError('Recorded camera.intrinsics profile size differs from calibrated intrinsics')
     simulated = bool(raw.get('simulation_truth') or camera.get('simulated'))
     return HandEyeCalibration(camera_in_flange=flange, camera_in_tcp=in_tcp, tcp_offset=tcp_offset,
-                              intrinsics=check_intrinsics(raw.get('intrinsics')), verdict=verdict,
+                              intrinsics=intrinsics, verdict=verdict,
                               metrics=metrics, board_in_base=board, source=source, sha256=sha256,
-                              simulated=simulated, camera_serial=device.get('serial_number'))
+                              simulated=simulated, camera_serial=device.get('serial_number'),
+                              recorded_camera_intrinsics=recorded_intrinsics)
 
 
 def load_handeye(path):

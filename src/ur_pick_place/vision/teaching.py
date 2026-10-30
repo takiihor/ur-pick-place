@@ -41,7 +41,11 @@ def defaults(repo):
     """Discover local inputs; no robot or camera is opened."""
     repo = Path(repo).resolve()
     calibrations = []
-    for path in sorted((repo.parent / 'ur10e-handeye' / 'sessions').glob('*/calibration.json'), reverse=True):
+    # Prefer cell-specific copies, such as a calibration re-expressed for a
+    # gripper TCP, before the original hand-eye sessions.
+    paths = sorted((repo / 'data' / 'calibrations').glob('*/calibration.json'), reverse=True)
+    paths += sorted((repo.parent / 'ur10e-handeye' / 'sessions').glob('*/calibration.json'), reverse=True)
+    for path in paths:
         try:
             calibration = load_handeye(path)
             if calibration.simulated:
@@ -94,8 +98,15 @@ class TeachingProject:
         # an active gripper TCP from the camera transform.
         from .robot_state import same_tcp
         if not same_tcp(raw['tcp'], self.calibration.tcp_offset):
-            raise ValueError('This read-only workflow requires the active gripper TCP to match the TCP recorded '
-                             'in calibration.json. Activate that TCP or make a calibration with your gripper TCP.')
+            def display_tcp(tcp):
+                return ', '.join(f'{v * 1000 if i < 3 else v:g}' for i, v in enumerate(tcp))
+            raise ValueError(
+                'The active gripper TCP does not match the selected calibration.\n'
+                f'Entered TCP (XYZ mm / rotation-vector rad): {display_tcp(raw["tcp"])}\n'
+                f'Calibration TCP (XYZ mm / rotation-vector rad): {display_tcp(self.calibration.tcp_offset)}\n'
+                f'Calibration file: {raw["calibration"]}\n'
+                'Select the calibration for the active TCP. The teaching page accepts XYZ in millimetres; '
+                'JSON/API values use metres.')
         stream = read_json(raw['calibration']).get('camera', {}).get('stream', {})
         self.config = VisionConfig(handeye_calibration=raw['calibration'],
             camera={'serial': self.calibration.camera_serial, 'width': self.calibration.intrinsics['width'],

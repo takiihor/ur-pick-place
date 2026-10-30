@@ -132,6 +132,29 @@ class QualityGateTests(unittest.TestCase):
         with self.assertRaisesRegex(VisionError, 'does not match the calibrated'):
             check(small)
 
+    def test_fitted_intrinsics_use_recorded_factory_profile_for_identity(self):
+        from vision_sim import calibration_dict
+        fitted = dict(INTRINSICS, fx=INTRINSICS['fx']-10.7, fy=INTRINSICS['fy']-9.4)
+        raw = calibration_dict(intrinsics=fitted)
+        raw['camera'] = {'intrinsics': dict(INTRINSICS)}
+        calibration = parse_handeye(raw)
+        check = intrinsics_checker(calibration, Camera())
+        frame = StaticCamera(np.full((720,1280),200.0,np.float32)).read()
+        self.assertEqual(check(frame), calibration.intrinsics)
+        self.assertEqual(check(frame)['fx'], fitted['fx'])
+        self.assertEqual(intrinsics_checker(calibration, Camera(intrinsics='camera'))(frame)['fx'], INTRINSICS['fx'])
+        # A changed factory profile is still rejected with the original tolerance.
+        frame.intrinsics['fx'] += 12
+        with self.assertRaisesRegex(VisionError, 'wrong camera or profile'):
+            check(frame)
+
+    def test_recorded_factory_profile_size_must_match_calibrated_size(self):
+        from vision_sim import calibration_dict
+        raw = calibration_dict()
+        raw['camera'] = {'intrinsics': dict(INTRINSICS, width=640, height=480)}
+        with self.assertRaisesRegex(VisionError, 'profile size differs'):
+            parse_handeye(raw)
+
 
 def charuco_target(directory):
     """A front board manifest built like charuco-realsense's tests (no PDF stack needed)."""

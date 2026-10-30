@@ -11,19 +11,19 @@
 <div id="message" role="status" aria-live="polite">Choose your camera calibration and marker to begin.</div>
 <div class="workspace"><div class="step-content">
 <section id="step-configure" aria-labelledby="title-configure"><div class="section-heading"><span class="eyebrow">STEP 1 OF 4</span><h2 id="title-configure" tabindex="-1">Connect your setup</h2><p>Choose the calibration and target you will use for this pick.</p></div>
-<form id="setup"><div class="fields">
+<form id="setup" novalidate><div class="fields">
 <label class="wide">Camera calibration<input id="calibration" list="calibrations" required placeholder="Path to calibration.json"><datalist id="calibrations"></datalist></label>
 <label>Robot IP<input id="robot_ip" required placeholder="192.168.12.248"></label><label>Marker type<select id="kind"><option value="charuco">ChArUco board</option><option value="aruco">Single ArUco marker</option></select></label>
 <label class="wide charuco">Board manifest<input id="manifest" list="manifests" placeholder="Path to board_manifest.json"><datalist id="manifests"></datalist></label>
 <label class="charuco wide">Board name<input id="board" value="calibration_stage2"></label>
 <label class="aruco" hidden>Dictionary<input id="dictionary" value="DICT_5X5_100"></label><label class="aruco" hidden>Marker ID<input id="marker_id" type="number" value="7" min="0" step="1"></label><label class="aruco wide" hidden>Marker size (mm)<input id="marker_length_mm" type="number" value="80" min="1" step="any"><small>Measure the outer black square, excluding the white margin.</small></label>
 </div>
-<div class="tcp-check"><label>Active gripper TCP <small>Metres / rotation-vector radians · must match the pendant and calibration</small><input id="tcp" aria-label="Active gripper TCP offset" placeholder="0, 0, 0.07, 0, 0, 0"></label><label class="check"><input id="tcp_confirmed" type="checkbox">These TCP values match the active gripper TCP on the pendant.</label></div>
-<details class="advanced"><summary>Project &amp; advanced settings</summary><div class="fields">
+<div class="tcp-check"><label>Active gripper TCP <small>X, Y, Z in millimetres · RX, RY, RZ in rotation-vector radians</small><input id="tcp" aria-label="Active gripper TCP offset (XYZ mm, rotation-vector rad)" placeholder="X, Y, Z, RX, RY, RZ" aria-describedby="tcp-help calibration-tcp" required></label><p id="tcp-help" class="hint">Copy the active flange-to-tool offset from PolyScope Installation → TCP. Check its units; use rotation-vector radians for orientation.</p><p id="calibration-tcp" class="hint"></p><label class="check"><input id="tcp_confirmed" type="checkbox" required>These TCP values match the active gripper TCP on the pendant.</label></div>
+<details id="setup-advanced" class="advanced"><summary>Project &amp; advanced settings</summary><div class="fields">
 <label class="wide">Project folder<input id="project" required placeholder="Folder for this teaching"><small>Enter an existing folder and choose Open saved project to resume.</small></label>
 <button id="open" type="button" class="secondary">Open saved project</button>
 <label class="wide">Follow marker<select id="motion_model"><option value="planar">XY + yaw · object on a flat support</option><option value="full">Full 3D pose</option></select><small>The marker itself may be vertical.</small></label>
-<label>Approach height (mm)<input id="approach_mm" type="number" min="1" max="300" value="100"><small>Robot-base +Z above the pick.</small></label><label>Allowed displacement (mm)<input id="max_shift_mm" type="number" min="1" max="500" value="30"></label><label>Allowed rotation (degrees)<input id="max_rotation_deg" type="number" min="1" max="180" value="15"></label>
+<label>Approach height (mm)<input id="approach_mm" type="number" min="1" max="300" step="any" value="100"><small>Robot-base +Z above the pick.</small></label><label>Allowed displacement (mm)<input id="max_shift_mm" type="number" min="1" max="500" step="any" value="30"></label><label>Allowed rotation (degrees)<input id="max_rotation_deg" type="number" min="1" max="180" step="any" value="15"></label>
 </div></details>
 <div class="actions"><button id="configure" type="submit" class="primary">Check setup &amp; continue →</button><span id="light-configure" class="light">● Pending</span></div></form>
 <details id="setup-details" class="technical" hidden><summary>Setup details</summary><p id="setup-result" class="result"></p></details></section>
