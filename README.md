@@ -22,7 +22,7 @@ supported. RG2 is the default, matching the previously tested procedure.
 ./start_marker_teach.sh
 ```
 
-Opens **http://127.0.0.1:8766**. This is a separate, read-only teaching app in
+Opens **http://127.0.0.1:8766**. This is a separate guided teaching app in
 this repository, reusing its vision formats and picking controller. Calibration
 stays in `ur10e-handeye`; no extra repository or Tk installation is needed.
 Starting it again opens the existing app and preserves its current work. If
@@ -47,8 +47,30 @@ lights. Project paths and movement limits live under **Project & advanced settin
 4. **Read/export:** return to the saved observation joints with the pendant.
    Re-read the marker to calculate a fresh pick endpoint and an approach **100 mm
    above it along robot-base +Z**. Green lights indicate completed steps.
+5. **Validation:** reposition the marker and object together, return to the saved
+   observation joints with the pendant, stop, and choose **Capture for validation**.
+   Review the captured image/axes, marker pose, calculated pick/approach poses and
+   displacement/rotation from teaching. Validation preserves the original teaching
+   reference and step-4 exports. Set the XYZ workspace bounds for your cell and a
+   test speed (default 10 mm/s, maximum 20 mm/s), confirm the marker stayed fixed
+   and the linear path is clear, then choose **Move to approach position**.
+   This commands one linear move above the pick; it does not descend or operate
+   the gripper. Keep the tab active. **Stop motion** stays visible in the header;
+   losing the UI heartbeat stops motion. This is a software stop, not an emergency
+   stop. Workspace/robot checks do not check for whole-arm or path collisions.
 
-The camera mounting must match calibration. In this read-only workflow, the active
+   Each motion attempt consumes one validation capture, which expires after
+   60 seconds. The active TCP, unchanged calibration/grasp, stationary starting
+   robot, starting pose, workspace, robot safety limits and inverse kinematics
+   are checked before motion. Return with the pendant and capture again for
+   each test. Results show measured TCP agreement with the commanded approach
+   (within 1 mm / 0.005 rad); separately record **Alignment looks correct** or
+   **Alignment needs adjustment** after checking the gripper over the intended
+   pick. Step 5 turns green only after a completed move is marked visually aligned.
+   History is saved in `validation_history.json`; reopening a project requires a
+   fresh capture before motion. TCP agreement alone does not measure camera accuracy.
+
+The camera mounting must match calibration. During teaching/capture, the active
 TCP must also match `camera_in_tcp.tcp_offset` in that file; the app cannot set it
 for you. Keep this same gripper TCP for teaching and execution. Tool Z must point
 within 20 degrees of base -Z for the existing force-guided sequence.
@@ -73,6 +95,8 @@ pose exports. SDK operations run in a child process with a 90-second timeout.
 | `target.json` | Fresh six-number pick TCP array accepted by Robot Bench's **Camera target** or `--pick-pose-file` |
 | `pick_target.json` | Pick and approach poses, timestamp, TCP, calibration identity and quality |
 | `target.script` | URScript variables `vision_pick` and `vision_approach`; no motion commands |
+| `validation_capture.json` + `validation.jpg` | Latest validation snapshot and annotated image; saved snapshots cannot authorize motion after restart |
+| `validation_history.json` | Motion outcomes, measured TCP errors and user-recorded visual alignment |
 
 All exported poses use the **robot base frame**, metres and UR rotation-vector
 radians. Re-read the marker for each cycle; a downloaded/exported file is a static
@@ -111,6 +135,18 @@ Your program supplies contact detection, force/travel/time limits, grip feedback
 and motion checks. Pose export alone does not validate reachability or clearance.
 The new teacher is tested with rendered markers/fake robot feedback; physical
 teaching and execution still require validation on your cell.
+
+To verify Step 5 without hardware, run:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p 'test_marker_validation*.py' -v
+```
+
+With Node.js and Google Chrome installed, this includes an isolated browser test
+of all five steps through the real HTTP server and capture subprocesses. It tests
+rotated marker detection, approach motion, visual pass/fail history, expired/used
+captures, TCP mismatch, Stop and network-loss heartbeat stopping. Camera images
+are rendered and every robot interface is simulated; no hardware is contacted.
 
 ## Start the backend and teaching UI
 
