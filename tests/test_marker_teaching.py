@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from vision_sim import (CAMERA_IN_FLANGE, MARKER_TCP, OBSERVE_PICK, TCP_OFFSET, calibration_dict, matrix_to_pose)
 import numpy as np
 from test_vision_pipeline import FakeRuntime, World
+from test_vision_detection import HAVE_CHARUCO
 from ur_pick_place.vision.grasp import load_taught
 from ur_pick_place.vision.errors import VisionError
 from ur_pick_place.vision.teaching import TeachingProject, defaults, read_json
@@ -157,6 +158,7 @@ class MarkerTeachingTests(unittest.TestCase):
         self.assertEqual(discovered['settings']['tcp'], tcp)
         self.assertFalse(self.runtime.calls)
 
+    @unittest.skipUnless(HAVE_CHARUCO, 'charuco-generator/charuco-realsense not installed')
     def test_charuco_capture_uses_same_teaching_pipeline(self):
         from vision_sim import FakeCamera, camera_view_point, face_up
         from ur_pick_place.vision.targets import target_from_config
