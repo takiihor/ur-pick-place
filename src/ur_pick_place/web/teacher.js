@@ -45,19 +45,31 @@ function message(text, error=false) { $('message').textContent=text; $('message'
 function targetFields() {
   for (const kind of ['charuco','aruco']) document.querySelectorAll('.'+kind).forEach(el=>el.hidden=$('kind').value!==kind);
 }
+function tcpText(tcp) {
+  return tcp.map((v,i)=>Number((i<3?v*1000:v).toPrecision(12))).join(', ');
+}
+function showCalibrationTCP() {
+  const calibration=defaults.calibrations.find(c=>c.path===$('calibration').value);
+  $('calibration-tcp').textContent=calibration
+    ? 'Calibration TCP (XYZ mm, rotation-vector rad): '+tcpText(calibration.tcp)
+    : 'This TCP must match the TCP recorded in your selected calibration.';
+}
 function fill(s) {
   for (const id of ['project','calibration','robot_ip','motion_model','approach_mm']) $(id).value=s[id];
   $('max_shift_mm').value=s.limits?.max_shift_mm??30; $('max_rotation_deg').value=s.limits?.max_rotation_deg??15;
-  $('tcp').value=s.tcp.join(', '); $('kind').value=s.target.kind;
+  $('tcp').value=tcpText(s.tcp); $('kind').value=s.target.kind;
   if(s.target.kind==='charuco') { $('manifest').value=s.target.board_manifest; $('board').value=s.target.board; }
   else { for(const id of ['dictionary','marker_id','marker_length_mm']) $(id).value=s.target[id]; }
-  targetFields();
+  targetFields(); showCalibrationTCP();
 }
 function settings() {
   const kind=$('kind').value;
+  const tcp=$('tcp').value.trim().split(/[\s,]+/).map((v,i)=>i<3?Number(v)/1000:Number(v));
+  if(tcp.length!==6||!tcp.every(Number.isFinite))
+    throw new Error('Active gripper TCP needs six numbers: X, Y, Z in mm, then RX, RY, RZ in rotation-vector radians.');
   return {project:$('project').value,calibration:$('calibration').value,robot_ip:$('robot_ip').value,
     motion_model:$('motion_model').value,approach_mm:Number($('approach_mm').value),
-    tcp:$('tcp').value.trim().split(/[\s,]+/).map(Number),tcp_confirmed:$('tcp_confirmed').checked,
+    tcp,tcp_confirmed:$('tcp_confirmed').checked,
     limits:{max_shift_mm:Number($('max_shift_mm').value),max_rotation_deg:Number($('max_rotation_deg').value),max_tilt_change_deg:10,max_height_change_mm:10,max_tool_tilt_deg:20},
     target:kind==='charuco'?{kind,board_manifest:$('manifest').value,board:$('board').value}:
       {kind,dictionary:$('dictionary').value,marker_id:Number($('marker_id').value),marker_length_mm:Number($('marker_length_mm').value)}};
@@ -104,8 +116,9 @@ function render() {
   }
 }
 async function post(action,body) {
-  posting=true; render();
+  posting=true;
   try {
+    render();
     await request('/api/'+action,body); dirty=false;
     if(action==='capture') $('marker_unchanged').checked=false;
     message(action==='configure'?'Setup ready. Continue to step 2.':'Working — keep the robot stationary.');
@@ -131,7 +144,23 @@ async function poll() {
 steps.forEach((step,index)=>$('nav-'+step).addEventListener('click',()=>showStep(index)));
 $('back').addEventListener('click',()=>showStep(activeStep-1));
 $('next').addEventListener('click',()=>showStep(activeStep+1));
-$('setup').addEventListener('submit',e=>{e.preventDefault();post('configure',settings());});
+$('setup').addEventListener('submit',async e=>{
+  e.preventDefault();
+  try {
+    // Handle validation here so a field inside closed advanced settings cannot
+    // silently prevent the submit event and leave the user without feedback.
+    const invalid=$('setup').querySelector('input:invalid, select:invalid');
+    if(invalid) {
+      const details=invalid.closest('details'); if(details) details.open=true;
+      const label=invalid.labels?.[0]?.firstChild?.textContent.trim()
+        ||invalid.labels?.[0]?.textContent.trim()||invalid.id;
+      activeStep=0; render();
+      message('Check '+label+': '+invalid.validationMessage,true);
+      invalid.focus(); invalid.reportValidity(); return;
+    }
+    await post('configure',settings());
+  } catch(e) { message(e.message,true); }
+});
 $('open').addEventListener('click',async()=>{
   try {
     const saved=await request('/api/open',{project:$('project').value});
@@ -142,7 +171,7 @@ $('open').addEventListener('click',async()=>{
 $('setup').addEventListener('input',()=>{dirty=true;activeStep=0;targetFields();$('tcp_confirmed').checked=false;message('Setup changed. Check the TCP and complete step 1 again.');render();});
 // Checking the declaration itself must not immediately uncheck it.
 $('tcp_confirmed').addEventListener('input',e=>{e.stopPropagation();render();});
-$('calibration').addEventListener('change',()=>{const item=defaults.calibrations.find(c=>c.path===$('calibration').value);if(item){$('tcp').value=item.tcp.join(', ');$('robot_ip').value=item.robot_ip;}});
+$('calibration').addEventListener('change',()=>{const item=defaults.calibrations.find(c=>c.path===$('calibration').value);if(item){$('tcp').value=tcpText(item.tcp);$('robot_ip').value=item.robot_ip;}showCalibrationTCP();});
 $('kind').addEventListener('change',targetFields);
 $('marker_unchanged').addEventListener('change',render);
 $('capture').addEventListener('click',()=>post('capture',{}));

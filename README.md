@@ -34,6 +34,11 @@ lights. Project paths and movement limits live under **Project & advanced settin
 1. **Set up:** choose your `calibration.json`, robot IP and ChArUco board manifest/name.
    A single ArUco marker is also supported: enter dictionary, ID and its measured
    outer black side length (for example, 80 mm). Check the active gripper TCP.
+   Enter its XYZ offset in **millimetres** and RX/RY/RZ in **rotation-vector radians**,
+   copying the active offset from PolyScope **Installation → TCP**. The page shows
+   the calibration TCP in the same units; saved JSON and API values use metres/radians.
+   Local calibration copies under `data/calibrations/*/calibration.json` appear
+   first in the calibration list, ahead of the original hand-eye sessions.
 2. **Capture:** pendant-jog until the entire target is visible, stop, then capture.
    A multi-frame quality check and image with coordinate axes confirm the result.
 3. **Teach:** keep the object/marker fixed. Pendant-jog the gripper to the desired
@@ -518,6 +523,10 @@ Re-teach after recalibrating hand-eye, changing the TCP, the observe joints or t
 refine setting; each is detected and refused. A changed camera profile is refused
 through the intrinsics check. A moved camera mount is caught only once you
 recalibrate (the calibration hash changes), so recalibrate after any mount change.
+When the hand-eye file contains fitted intrinsics, live SDK intrinsics are checked
+against the original factory profile saved in `camera.intrinsics`; pose estimation
+still uses the fitted `intrinsics`. Older files without a recorded factory profile
+are checked against their calibrated intrinsics.
 
 ### Install and configure
 

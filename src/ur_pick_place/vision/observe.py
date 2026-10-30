@@ -98,6 +98,10 @@ def _jsonable(value):
 def intrinsics_checker(calibration, camera_config):
     """The live stream must match the calibrated profile; return the intrinsics to use."""
     calibrated = calibration.intrinsics
+    # A fitted camera model intentionally differs from the factory intrinsics
+    # reported by the SDK. Check stream identity against the factory profile
+    # recorded at calibration time, while keeping the fitted model for PnP.
+    recorded = calibration.recorded_camera_intrinsics or calibrated
 
     def check(frame):
         live = check_intrinsics(frame.intrinsics, 'camera intrinsics')
@@ -106,9 +110,9 @@ def intrinsics_checker(calibration, camera_config):
                 (width, height) != (calibrated['width'], calibrated['height']):
             raise VisionError(f'Camera stream {width}x{height} does not match the calibrated '
                               f'{calibrated["width"]}x{calibrated["height"]} profile')
-        mismatch = max(abs(live[k] - calibrated[k]) for k in ('fx', 'fy', 'ppx', 'ppy'))
+        mismatch = max(abs(live[k] - recorded[k]) for k in ('fx', 'fy', 'ppx', 'ppy'))
         if mismatch > camera_config.max_intrinsics_mismatch_px:
-            raise VisionError(f'Camera intrinsics differ from the hand-eye calibration by {mismatch:.2f} px '
+            raise VisionError(f'Camera intrinsics differ from the recorded capture profile by {mismatch:.2f} px '
                               f'(limit {camera_config.max_intrinsics_mismatch_px:g}); wrong camera or profile?')
         return calibrated if camera_config.intrinsics == 'calibration' else live
     return check
